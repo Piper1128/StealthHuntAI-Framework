@@ -243,6 +243,11 @@ namespace StealthHuntAI
         [Tooltip("Map state names to animation clips. Add/remove as needed.")]
         public List<AnimSlot> animSlots = new List<AnimSlot>();
 
+        [Header("Combat (optional -- requires Combat Pack)")]
+        [Tooltip("Assign a MonoBehaviour implementing ICombatBehaviour to override " +
+                 "default Hostile behaviour with a custom combat system.")]
+        public MonoBehaviour combatBehaviourOverride;
+
         [Header("Morale")]
         [Tooltip("Starting morale level. 1 = confident, 0 = broken.")]
         [Range(0f, 1f)] public float startingMorale = 1f;
@@ -321,6 +326,8 @@ namespace StealthHuntAI
         private int _searchPassCount;
         private string _currentAnimState = "";
         private float _aimWeight;
+        private ICombatBehaviour _combat;
+        private bool _wasInCombat;
         private float _lookAroundTimer;
         private Quaternion _lookAroundTarget;
         private bool _hasLookTarget;
@@ -657,6 +664,21 @@ namespace StealthHuntAI
                     break;
             }
 
+            // Combat Pack handoff -- runs before SubState switch
+            if (CurrentAlertState == AlertState.Hostile && _combat != null)
+            {
+                if (!_wasInCombat)
+                {
+                    _wasInCombat = true;
+                    _combat.OnEnterCombat(this);
+                }
+                if (_combat.WantsControl)
+                {
+                    _combat.Tick(this);
+                    return; // skip Core SubState ticks
+                }
+            }
+
             switch (CurrentSubState)
             {
                 case SubState.Idle: TickIdle(); break;
@@ -678,12 +700,20 @@ namespace StealthHuntAI
         private void TransitionTo(AlertState newAlert, SubState newSub)
         {
             AlertState prev = CurrentAlertState;
+
+            // Notify Combat Pack when leaving Hostile
+            if (prev == AlertState.Hostile && newAlert != AlertState.Hostile
+             && _combat != null && _wasInCombat)
+            {
+                _wasInCombat = false;
+                _combat.OnExitCombat(this);
+            }
+
             CurrentAlertState = newAlert;
             CurrentSubState = newSub;
             _stateTimer = 0f;
             _searchTimer = 0f;
             _hasLookTarget = false;
-            // Always re-enable agent rotation on state change
             if (_agent != null) _agent.updateRotation = true;
             _lookAroundTimer = 0f;
             _hasPendingNudge = false;
@@ -772,6 +802,8 @@ namespace StealthHuntAI
         private void UpdateAnimator()
         {
             if (!_hasAnimator) return;
+            // Skip when Combat Pack owns animation
+            if (_combat != null && _combat.WantsControl) return;
 
             // Use actual agent velocity magnitude -- not configured speed
             // This correctly detects when unit is standing still vs moving
@@ -935,6 +967,47 @@ namespace StealthHuntAI
 
         /// <summary>Returns the current StealthTarget (player). Null if not found.</summary>
         public StealthTarget GetTarget() => _target;
+
+        /// <summary>Returns the AwarenessSensor component.</summary>
+        public AwarenessSensor Sensor => _sensor;
+
+        /// <summary>Move toward a world position. For use by Combat Pack.</summary>
+        public void CombatMoveTo(Vector3 pos) => MoveTo(pos);
+
+        /// <summary>Stop movement. For use by Combat Pack.</summary>
+        public void CombatStop() => StopMoving();
+
+        /// <summary>Face toward a world position smoothly. For use by Combat Pack.</summary>
+        public void CombatFaceToward(Vector3 pos, float speed = 360f)
+        {
+            Vector3 dir = (pos - transform.position);
+            dir.y = 0f;
+            if (dir.magnitude < 0.1f) return;
+            if (_agent != null) _agent.updateRotation = false;
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                Quaternion.LookRotation(dir.normalized),
+                speed * Time.deltaTime);
+        }
+
+        /// <summary>Re-enable agent rotation. Call after CombatFaceToward when done.</summary>
+        public void CombatRestoreRotation()
+        {
+            if (_agent != null) _agent.updateRotation = true;
+        }
+
+        /// <summary>Transition to a SubState. For use by Combat Pack.</summary>
+        public void CombatSetSubState(SubState state) => TransitionSubState(state);
+
+        /// <summary>Play an AnimSlot trigger. For use by Combat Pack.</summary>
+        public void CombatPlayAnim(AnimTrigger trigger, float duration = -1f)
+        {
+            if (!_hasAnimator) return;
+            string clip = GetClip(trigger);
+            if (string.IsNullOrEmpty(clip)) return;
+            float dur = duration >= 0f ? duration : animTransitionDuration;
+            try { animator.CrossFade(clip, dur); } catch { }
+        }
 
         /// <summary>Apply the assigned preset to this unit and its AwarenessSensor.</summary>
         public void ApplyPreset()

@@ -7,7 +7,7 @@ namespace StealthHuntAI.Demo
     /// Supports burst fire and single shot modes.
     /// Attach to same GameObject as StealthHuntAI.
     /// </summary>
-    public class GuardWeapon : MonoBehaviour
+    public class GuardWeapon : MonoBehaviour, IWeaponProvider
     {
         [Header("Shooting")]
         [Range(1f, 20f)] public float shootRange = 20f;
@@ -38,6 +38,10 @@ namespace StealthHuntAI.Demo
         // ---------- Enums -------------------------------------------------------
 
         public enum FireMode { Single, Burst, Auto }
+
+        // IWeaponProvider
+        public float ShootRange => shootRange;
+        public bool IsReady => true;
 
         // ---------- Internal ----------------------------------------------------
 

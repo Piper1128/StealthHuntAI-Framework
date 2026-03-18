@@ -252,9 +252,9 @@ namespace StealthHuntAI
                 ? Vector3.Distance(transform.position, _target.Position)
                 : Vector3.Distance(transform.position, _lastKnownPosition);
 
-            // Check if GuardWeapon is attached and has a shoot range
-            var weapon = GetComponent<Demo.GuardWeapon>();
-            float combatRange = weapon != null ? weapon.shootRange * 0.75f : -1f;
+            // Use IWeaponProvider interface -- works with any weapon, not just GuardWeapon
+            var weapon = GetComponent<IWeaponProvider>();
+            float combatRange = weapon != null ? weapon.ShootRange * 0.75f : -1f;
 
             bool inCombatRange = combatRange > 0f
                 && _sensor.CanSeeTarget
@@ -306,8 +306,8 @@ namespace StealthHuntAI
             }
 
             // Check if we should go back to pursuing
-            var weapon = GetComponent<Demo.GuardWeapon>();
-            float combatRange = weapon != null ? weapon.shootRange * 0.75f : 15f;
+            var weapon = GetComponent<IWeaponProvider>();
+            float combatRange = weapon != null ? weapon.ShootRange * 0.75f : 15f;
 
             bool stillInRange = _sensor != null && _sensor.CanSeeTarget
                 && _target != null

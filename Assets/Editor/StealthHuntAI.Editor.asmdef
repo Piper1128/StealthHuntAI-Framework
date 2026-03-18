@@ -1,0 +1,19 @@
+{
+    "name": "StealthHuntAI.Editor",
+    "rootNamespace": "StealthHuntAI.Editor",
+    "references": [
+        "StealthHuntAI.Core",
+        "StealthHuntAI.Combat"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

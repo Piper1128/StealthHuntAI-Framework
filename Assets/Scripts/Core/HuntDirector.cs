@@ -42,12 +42,18 @@ namespace StealthHuntAI
             _squads = new System.Collections.Generic.List<SquadBlackboard>();
             _nudgeCooldowns.Clear();
             EvasionTime = 0f;
+            _heatMap.Clear();
+            _coverPoints.Clear();
+            _sectorWatchers.Clear();
             _flightHistory.Clear();
             _knownHideSpots.Clear();
             PredictedFlightDir = Vector3.zero;
             FlightObservations = 0;
             _lastSector = -1;
             System.Array.Clear(_markov, 0, _markov.Length);
+            _heatMap.Clear();
+            _coverPoints.Clear();
+            _sectorWatchers.Clear();
         }
 
         // ---------- Inspector -------------------------------------------------
@@ -153,6 +159,7 @@ namespace StealthHuntAI
 
         private static StealthTarget _target;
         private static List<StealthHuntAI> _units = new List<StealthHuntAI>();
+        public static IReadOnlyList<StealthHuntAI> AllUnits => _units;
         private static List<SquadBlackboard> _squads = new List<SquadBlackboard>();
 
         // ---------- Internal --------------------------------------------------
@@ -213,6 +220,78 @@ namespace StealthHuntAI
         // Intensity threshold below which we skip NavMesh path and use raycast only
         private const float NavMeshSoundThreshold = 0.4f;
 
+        // ---------- Squad Heat Map -------------------------------------------
+
+        private static readonly Dictionary<Vector2Int, float> _heatMap
+            = new Dictionary<Vector2Int, float>();
+        private const float HeatGridSize = 2f;
+        private const float HeatDecayRate = 0.5f;
+
+        public static void RegisterHeat(Vector3 pos, float heat = 1f)
+        {
+            var cell = WorldToCell(pos);
+            _heatMap[cell] = Mathf.Clamp01(
+                (_heatMap.TryGetValue(cell, out float cur) ? cur : 0f) + heat);
+        }
+
+        public static void ClearHeat(Vector3 pos)
+            => _heatMap.Remove(WorldToCell(pos));
+
+        public static float GetHeat(Vector3 pos)
+            => _heatMap.TryGetValue(WorldToCell(pos), out float h) ? h : 0f;
+
+        private static Vector2Int WorldToCell(Vector3 pos)
+            => new Vector2Int(
+                Mathf.RoundToInt(pos.x / HeatGridSize),
+                Mathf.RoundToInt(pos.z / HeatGridSize));
+
+        // ---------- CoverPoint Registry --------------------------------------
+
+        // Uses object to avoid Core depending on Combat assembly
+        private static readonly List<System.Object> _coverPoints = new List<System.Object>();
+        public static IReadOnlyList<System.Object> AllCoverPoints => _coverPoints;
+
+        public static void RegisterCoverPoint(System.Object cp)
+        {
+            if (!_coverPoints.Contains(cp)) _coverPoints.Add(cp);
+        }
+
+        public static void UnregisterCoverPoint(System.Object cp)
+            => _coverPoints.Remove(cp);
+
+        // ---------- Sector Watch ---------------------------------------------
+
+        private static readonly Dictionary<int, StealthHuntAI> _sectorWatchers
+            = new Dictionary<int, StealthHuntAI>();
+
+        public static void RegisterSectorWatch(Vector3 direction, StealthHuntAI unit)
+        {
+            _sectorWatchers[DirectionToSector8(direction)] = unit;
+        }
+
+        public static void ClearSectorWatch(StealthHuntAI unit)
+        {
+            var keys = new List<int>();
+            foreach (var kv in _sectorWatchers)
+                if (kv.Value == unit) keys.Add(kv.Key);
+            foreach (var k in keys) _sectorWatchers.Remove(k);
+        }
+
+        public static bool IsSectorWatched(Vector3 direction)
+        {
+            if (!_sectorWatchers.TryGetValue(
+                DirectionToSector8(direction), out var w)) return false;
+            return w != null;
+        }
+
+        private static int DirectionToSector8(Vector3 dir)
+        {
+            dir.y = 0f;
+            float deg = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+            if (deg < 0) deg += 360f;
+            return Mathf.RoundToInt(deg / 45f) % 8;
+        }
+
         // Auto-generated regions (used when no PatrolRegion components exist)
         private readonly List<PatrolRegion> _autoRegions = new List<PatrolRegion>();
         private bool _autoRegionsGenerated;
@@ -249,6 +328,18 @@ namespace StealthHuntAI
 
         private void Update()
         {
+            // Decay heat map
+            if (_heatMap.Count > 0)
+            {
+                var cells = new List<Vector2Int>(_heatMap.Keys);
+                for (int i = 0; i < cells.Count; i++)
+                {
+                    float v = _heatMap[cells[i]] - HeatDecayRate * Time.deltaTime;
+                    if (v <= 0f) _heatMap.Remove(cells[i]);
+                    else _heatMap[cells[i]] = v;
+                }
+            }
+
             UpdateTension();
             UpdateAlertLevel();
 

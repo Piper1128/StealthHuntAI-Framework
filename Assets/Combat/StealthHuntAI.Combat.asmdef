@@ -1,0 +1,16 @@
+{
+    "name": "StealthHuntAI.Combat",
+    "rootNamespace": "StealthHuntAI.Combat",
+    "references": [
+        "StealthHuntAI.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

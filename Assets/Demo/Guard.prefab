@@ -280,7 +280,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_Name
-      value: Ch15_nonPBR
+      value: Guard
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_Layer
@@ -433,6 +433,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       insertIndex: -1
       addedObject: {fileID: 8817111916941598302}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6159174385232656303}
   m_SourcePrefab: {fileID: 100100000, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
 --- !u!95 &3206335837847422642 stripped
 Animator:
@@ -544,7 +547,7 @@ MonoBehaviour:
     customName: 
   - trigger: 1
     clips:
-    - Rifle Crouch Walk
+    - Walking Rifle
     customName: 
   - trigger: 2
     clips:
@@ -556,7 +559,7 @@ MonoBehaviour:
     customName: 
   - trigger: 4
     clips:
-    - Rifle Crouch Walk
+    - Walking Rifle
     customName: 
   - trigger: 5
     clips:
@@ -578,6 +581,7 @@ MonoBehaviour:
     clips:
     - Death
     customName: 
+  combatBehaviourOverride: {fileID: 0}
   startingMorale: 1
   persistMorale: 0
   onBecameSuspicious:
@@ -630,3 +634,39 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 384
   _layerMasksConfigured: 1
+--- !u!114 &6159174385232656303
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8202406276971202162}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 70102b6f06b145e4ba24a32e083e33f3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: StealthHuntAI.Combat::StealthHuntAI.Combat.StandardCombat
+  coverSearchRange: 20
+  coverArrivalThreshold: 1.2
+  coverWaitTime: 1.5
+  peekDuration: 1
+  repositionThreshold: 3
+  suppressionRange: 15
+  suppressionDuration: 2.5
+  weights:
+    protection: 1
+    proximity: 0.8
+    visibility: 0.9
+    crossfire: 0.7
+    formation: 0.5
+    pathPredict: 0.6
+    heatPenalty: 0.8
+    novelty: 0.4
+  animMoveToCover: MoveToCover
+  animTakeCover: TakeCover
+  animCoverIdle: CoverIdle
+  animPeekLeft: PeekLeft
+  animPeekRight: PeekRight
+  animCoverFire: CoverFire
+  animSuppressing: Suppressing
+  animReposition: Reposition
