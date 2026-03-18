@@ -30,6 +30,10 @@ namespace StealthHuntAI
         public bool sightFollowHeadBone = true;
 
         [Header("Sight Detection")]
+        [Tooltip("Seconds of delay before awareness begins rising after first sighting. " +
+                 "Simulates reaction time -- player has a brief window to hide.")]
+        [Range(0f, 1f)] public float reactionTime = 0.15f;
+
         [Tooltip("How fast awareness rises when target is fully visible at close range.")]
         [Range(0.1f, 10f)] public float sightRiseSpeed = 2.0f;
 
@@ -119,6 +123,7 @@ namespace StealthHuntAI
         private float _noiseTimer;
         private float _noiseOffset;
         private float _hearingAccumulator;
+        private float _reactionTimer;
 
         // Stimulus history
         private StimulusRecord[] _stimulusHistory = new StimulusRecord[8];
@@ -363,6 +368,10 @@ namespace StealthHuntAI
             // Sight contribution
             if (CanSeeTarget)
             {
+                // Reaction time delay -- awareness doesn't rise immediately
+                _reactionTimer += Time.deltaTime;
+                if (_reactionTimer < reactionTime) goto skipSight;
+
                 float distanceFactor = 1f - Mathf.Clamp01(
                     Vector3.Distance(transform.position, _target.Position) / sightRange) * 0.5f;
 
@@ -395,10 +404,13 @@ namespace StealthHuntAI
             }
             else
             {
+                // Reset reaction timer when target leaves sight
+                _reactionTimer = 0f;
                 // Decay sight accumulator when not visible
                 SightAccumulator = Mathf.Max(0f,
                     SightAccumulator - sightDecaySpeed * Time.deltaTime);
             }
+        skipSight:;
 
             // Hearing contribution (continuous ambient sound)
             if (CanHearTarget)
@@ -439,12 +451,15 @@ namespace StealthHuntAI
             _lastLightCheck = Time.time;
 
             Vector3 targetPos = _target != null ? _target.Position : transform.position;
-            Light[] lights = FindObjectsByType<Light>(FindObjectsSortMode.None);
             float totalLight = 0f;
 
-            foreach (var light in lights)
+            // Use static registry instead of FindObjectsByType -- zero GC, O(n) on active lights
+            var lights = LightRegistry.All;
+            for (int i = 0; i < lights.Count; i++)
             {
-                if (!light.enabled) continue;
+                var light = lights[i];
+                if (light == null || !light.enabled) continue;
+
                 if (light.type == LightType.Directional)
                 {
                     totalLight += light.intensity * 0.3f;

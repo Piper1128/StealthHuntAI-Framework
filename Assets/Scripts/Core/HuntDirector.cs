@@ -45,6 +45,9 @@ namespace StealthHuntAI
             _flightHistory.Clear();
             _knownHideSpots.Clear();
             PredictedFlightDir = Vector3.zero;
+            FlightObservations = 0;
+            _lastSector = -1;
+            System.Array.Clear(_markov, 0, _markov.Length);
         }
 
         // ---------- Inspector -------------------------------------------------
@@ -164,18 +167,29 @@ namespace StealthHuntAI
         private static readonly Dictionary<int, float> _nudgeCooldowns
             = new Dictionary<int, float>();
 
-        // ---------- Flight pattern memory ------------------------------------
+        // ---------- Flight pattern memory (Markov model) --------------------
 
-        private static readonly Queue<Vector3> _flightHistory
-            = new Queue<Vector3>();
+        // Directional space divided into 8 sectors (N, NE, E, SE, S, SW, W, NW)
+        // Transition matrix: _markov[from, to] = observation count
+        private static readonly float[,] _markov = new float[8, 8];
+        private static int _lastSector = -1;
+
+        // Prior strength -- flat prior so early predictions aren't wild
+        private const float MarkovPrior = 0.5f;
+
+        // Legacy weighted average for blending with Markov prediction
+        private static readonly Queue<Vector3> _flightHistory = new Queue<Vector3>();
         private const int MaxFlightHistory = 5;
 
         /// <summary>
-        /// Predicted flight direction based on historical player escape patterns.
-        /// Weighted average of last MaxFlightHistory observed flight vectors.
-        /// More recent observations weighted higher.
+        /// Predicted flight direction based on Markov model of player escape patterns.
+        /// Blends Markov prediction with weighted history average.
+        /// Accuracy improves with more encounters.
         /// </summary>
         public static Vector3 PredictedFlightDir { get; private set; }
+
+        /// <summary>Total flight observations recorded this session.</summary>
+        public static int FlightObservations { get; private set; }
 
         // ---------- Hide spot memory -----------------------------------------
 
@@ -214,6 +228,10 @@ namespace StealthHuntAI
                 return;
             }
             _instance = this;
+
+            // Auto-register all scene lights into LightRegistry
+            // so AwarenessSensor can query them without FindObjectsByType
+            LightRegistry.AutoRegisterSceneLights();
         }
 
         private void OnDestroy()
@@ -672,12 +690,22 @@ namespace StealthHuntAI
 
         /// <summary>
         /// Record a flight vector when a unit loses the player.
-        /// Used to build predicted flight direction over time.
+        /// Updates the Markov transition model and weighted history.
         /// </summary>
         public static void RecordFlightVector(Vector3 flightVec)
         {
             if (flightVec.magnitude < 0.1f) return;
 
+            int currentSector = DirectionToSector(flightVec);
+
+            // Update Markov transition matrix
+            if (_lastSector >= 0)
+                _markov[_lastSector, currentSector] += 1f;
+
+            _lastSector = currentSector;
+            FlightObservations++;
+
+            // Also update weighted history for blending
             _flightHistory.Enqueue(flightVec.normalized);
             while (_flightHistory.Count > MaxFlightHistory)
                 _flightHistory.Dequeue();
@@ -687,25 +715,67 @@ namespace StealthHuntAI
 
         private static void UpdatePredictedFlight()
         {
-            if (_flightHistory.Count == 0)
+            if (FlightObservations == 0)
             {
                 PredictedFlightDir = Vector3.zero;
                 return;
             }
 
-            Vector3 sum = Vector3.zero;
-            float total = 0f;
-
-            // Newer entries weight more -- iterate oldest to newest
-            var arr = _flightHistory.ToArray();
-            for (int i = 0; i < arr.Length; i++)
+            // Markov prediction -- best next sector given last observed sector
+            Vector3 markovPred = Vector3.zero;
+            if (_lastSector >= 0)
             {
-                float w = 1f + i; // 1, 2, 3, 4, 5
-                sum += arr[i] * w;
-                total += w;
+                float bestScore = -1f;
+                int bestSec = 0;
+                for (int i = 0; i < 8; i++)
+                {
+                    float score = _markov[_lastSector, i] + MarkovPrior;
+                    if (score > bestScore) { bestScore = score; bestSec = i; }
+                }
+                markovPred = SectorToDirection(bestSec);
             }
 
-            PredictedFlightDir = total > 0f ? (sum / total).normalized : Vector3.zero;
+            // Weighted history average
+            Vector3 histPred = Vector3.zero;
+            if (_flightHistory.Count > 0)
+            {
+                Vector3 sum = Vector3.zero;
+                float total = 0f;
+                var arr = _flightHistory.ToArray();
+                for (int i = 0; i < arr.Length; i++)
+                {
+                    float w = 1f + i;
+                    sum += arr[i] * w;
+                    total += w;
+                }
+                histPred = total > 0f ? (sum / total).normalized : Vector3.zero;
+            }
+
+            // Blend -- Markov weight grows with observations, maxes at 80%
+            float markovWeight = Mathf.Clamp01(FlightObservations / 10f) * 0.8f;
+            float histWeight = 1f - markovWeight;
+
+            Vector3 blended = markovPred * markovWeight + histPred * histWeight;
+            PredictedFlightDir = blended.magnitude > 0.01f
+                ? blended.normalized : Vector3.zero;
+        }
+
+        // ---------- Markov helpers --------------------------------------------
+
+        /// <summary>Convert a direction vector to one of 8 compass sectors (0=N, clockwise).</summary>
+        private static int DirectionToSector(Vector3 dir)
+        {
+            dir.y = 0f;
+            float angle = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+            if (angle < 0) angle += 360f;
+            return Mathf.RoundToInt(angle / 45f) % 8;
+        }
+
+        /// <summary>Convert a sector index back to a world direction vector.</summary>
+        private static Vector3 SectorToDirection(int sector)
+        {
+            float angle = sector * 45f * Mathf.Deg2Rad;
+            return new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
         }
 
         /// <summary>
@@ -1007,7 +1077,8 @@ namespace StealthHuntAI
             UnityEditor.Handles.Label(
                 transform.position + Vector3.up,
                 "Tension: " + TensionLevel.ToString("F2") +
-                " | Evasion: " + EvasionTime.ToString("F0") + "s |" +
+                " | Evasion: " + EvasionTime.ToString("F0") + "s" +
+                " | FlightObs: " + FlightObservations +
                 "  Alert: " + AlertLevel.ToString());
         }
 #endif

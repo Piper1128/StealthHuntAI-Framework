@@ -21,15 +21,29 @@ namespace StealthHuntAI
         Custom          // Manual only -- call PlayAnimState("name") from code
     }
 
-    /// <summary>Maps an AnimTrigger to an Animator clip name.</summary>
+    /// <summary>
+    /// Maps an AnimTrigger to one or more Animator clip names.
+    /// When multiple clips are assigned, one is chosen at random each time the state is entered.
+    /// </summary>
     [System.Serializable]
-    public class AnimClipAssignment
+    public class AnimSlot
     {
         public AnimTrigger trigger = AnimTrigger.Idle;
-        public string clipName = "";
+        public List<string> clips = new List<string>();
 
         [Tooltip("Only used when trigger is Custom. Name used with PlayAnimState().")]
         public string customName = "";
+
+        /// <summary>Pick a random clip from the list. Returns null if empty.</summary>
+        public string Pick()
+        {
+            if (clips == null || clips.Count == 0) return null;
+            if (clips.Count == 1) return string.IsNullOrEmpty(clips[0]) ? null : clips[0];
+            // Filter out empty entries
+            var valid = clips.FindAll(c => !string.IsNullOrEmpty(c));
+            if (valid.Count == 0) return null;
+            return valid[UnityEngine.Random.Range(0, valid.Count)];
+        }
     }
 
     // ---------- Enums ---------------------------------------------------------
@@ -110,6 +124,11 @@ namespace StealthHuntAI
     public partial class StealthHuntAI : MonoBehaviour
     {
         // ---------- Inspector -------------------------------------------------
+
+        [Header("Preset")]
+        [Tooltip("Drag a StealthAIPreset asset here and click Apply Preset " +
+                 "to configure all settings at once.")]
+        public StealthAIPreset preset;
 
         [Header("Perception")]
         [Range(1f, 60f)] public float sightRange = 15f;
@@ -204,8 +223,25 @@ namespace StealthHuntAI
         [Tooltip("Crossfade transition duration between animation states.")]
         [Range(0f, 0.5f)] public float animTransitionDuration = 0.15f;
 
+        [Header("Aiming IK")]
+        [Tooltip("Enable upper body IK aiming toward last known position. " +
+                 "Requires IK Pass enabled on Animator Base Layer.")]
+        public bool enableAimIK = true;
+
+        [Tooltip("How much the body rotates toward aim target.")]
+        [Range(0f, 1f)] public float aimBodyWeight = 0.3f;
+
+        [Tooltip("How much the head rotates toward aim target.")]
+        [Range(0f, 1f)] public float aimHeadWeight = 0.7f;
+
+        [Tooltip("How much the eyes rotate toward aim target.")]
+        [Range(0f, 1f)] public float aimEyesWeight = 0f;
+
+        [Tooltip("Height offset applied to aim target.")]
+        [Range(0f, 2f)] public float aimTargetHeightOffset = 0.8f;
+
         [Tooltip("Map state names to animation clips. Add/remove as needed.")]
-        public List<AnimClipAssignment> animClipAssignments = new List<AnimClipAssignment>();
+        public List<AnimSlot> animSlots = new List<AnimSlot>();
 
         [Header("Morale")]
         [Tooltip("Starting morale level. 1 = confident, 0 = broken.")]
@@ -284,6 +320,7 @@ namespace StealthHuntAI
         private bool _hasSearchDest;
         private int _searchPassCount;
         private string _currentAnimState = "";
+        private float _aimWeight;
         private float _lookAroundTimer;
         private Quaternion _lookAroundTarget;
         private bool _hasLookTarget;
@@ -786,51 +823,76 @@ namespace StealthHuntAI
             return GetClip(trigger) ?? "";
         }
 
-        /// <summary>Returns clip name for a Custom entry by customName.</summary>
+        /// <summary>Returns a randomly picked clip for a Custom slot by customName.</summary>
         public string GetCustomClip(string customName)
         {
-            for (int i = 0; i < animClipAssignments.Count; i++)
+            for (int i = 0; i < animSlots.Count; i++)
             {
-                var a = animClipAssignments[i];
-                if (a.trigger == AnimTrigger.Custom
-                 && a.customName == customName
-                 && !string.IsNullOrEmpty(a.clipName))
-                    return a.clipName;
+                var slot = animSlots[i];
+                if (slot.trigger == AnimTrigger.Custom && slot.customName == customName)
+                    return slot.Pick();
             }
             return null;
         }
 
-        /// <summary>Returns clip name for a given trigger. Returns null if not assigned.</summary>
+        /// <summary>Returns a randomly picked clip for a given trigger. Returns null if not assigned.</summary>
         public string GetClip(AnimTrigger trigger)
         {
-            for (int i = 0; i < animClipAssignments.Count; i++)
+            for (int i = 0; i < animSlots.Count; i++)
             {
-                var a = animClipAssignments[i];
-                if (a.trigger == trigger && !string.IsNullOrEmpty(a.clipName))
-                    return a.clipName;
+                var slot = animSlots[i];
+                if (slot.trigger == trigger)
+                    return slot.Pick();
             }
             return null;
         }
 
         /// <summary>
-        /// Play a Custom clip by its customName.
-        /// Example: ai.PlayAnimState("Shoot")
+        /// Play a Custom slot by its customName. Picks randomly if multiple clips assigned.
+        /// Example: ai.PlayAnimState("HitReaction")
         /// </summary>
         public void PlayAnimState(string customName, float transitionDuration = -1f)
         {
             if (!_hasAnimator) return;
-            for (int i = 0; i < animClipAssignments.Count; i++)
+            string clip = GetCustomClip(customName);
+            if (string.IsNullOrEmpty(clip)) return;
+            float dur = transitionDuration >= 0f ? transitionDuration : animTransitionDuration;
+            try { animator.CrossFade(clip, dur); } catch { }
+        }
+
+        private void OnAnimatorIK(int layer)
+        {
+            if (!_hasAnimator || !enableAimIK) return;
+            if (CurrentAlertState == AlertState.Passive) return;
+
+            // Determine aim target
+            Vector3 aimPos;
+            if (_sensor != null && _sensor.CanSeeTarget && _target != null)
+                aimPos = _target.Position + Vector3.up * aimTargetHeightOffset;
+            else if (_hasLastKnown)
+                aimPos = _lastKnownPosition + Vector3.up * aimTargetHeightOffset;
+            else
+                aimPos = transform.position + transform.forward * 5f
+                       + Vector3.up * aimTargetHeightOffset;
+
+            // Weight based on alert state
+            float weight = CurrentAlertState switch
             {
-                var a = animClipAssignments[i];
-                if (a.trigger == AnimTrigger.Custom
-                 && a.customName == customName
-                 && !string.IsNullOrEmpty(a.clipName))
-                {
-                    float dur = transitionDuration >= 0f ? transitionDuration : animTransitionDuration;
-                    try { animator.CrossFade(a.clipName, dur); } catch { }
-                    return;
-                }
-            }
+                AlertState.Hostile => 1.0f,
+                AlertState.Suspicious => 0.4f,
+                _ => 0f
+            };
+
+            // Smooth weight transition
+            _aimWeight = Mathf.MoveTowards(_aimWeight, weight, 2f * Time.deltaTime);
+            float smoothWeight = _aimWeight;
+
+            animator.SetLookAtWeight(smoothWeight,
+                                     aimBodyWeight * smoothWeight,
+                                     aimHeadWeight * smoothWeight,
+                                     aimEyesWeight * smoothWeight,
+                                     0.5f);
+            animator.SetLookAtPosition(aimPos);
         }
 
         /// <summary>Called by GuardHealth when unit dies.</summary>
@@ -842,8 +904,14 @@ namespace StealthHuntAI
             try { animator.CrossFade(clip, 0.1f); } catch { }
         }
 
-        /// <summary>Ensure default clip assignments exist on first setup.</summary>
+        /// <summary>Ensure default AnimSlots exist on first setup.</summary>
         private void EnsureDefaultAnimAssignments()
+        {
+            EnsureDefaultAnimAssignmentsPublic();
+        }
+
+        /// <summary>Public version called by editor Auto Assign.</summary>
+        public void EnsureDefaultAnimAssignmentsPublic()
         {
             var defaults = new[]
             {
@@ -856,14 +924,24 @@ namespace StealthHuntAI
             foreach (var t in defaults)
             {
                 bool exists = false;
-                for (int i = 0; i < animClipAssignments.Count; i++)
-                    if (animClipAssignments[i].trigger == t) { exists = true; break; }
+                for (int i = 0; i < animSlots.Count; i++)
+                    if (animSlots[i].trigger == t) { exists = true; break; }
                 if (!exists)
-                    animClipAssignments.Add(new AnimClipAssignment { trigger = t, clipName = "" });
+                    animSlots.Add(new AnimSlot { trigger = t, clips = new List<string>() });
             }
         }
 
         // ---------- Public API ------------------------------------------------
+
+        /// <summary>Returns the current StealthTarget (player). Null if not found.</summary>
+        public StealthTarget GetTarget() => _target;
+
+        /// <summary>Apply the assigned preset to this unit and its AwarenessSensor.</summary>
+        public void ApplyPreset()
+        {
+            if (preset == null) return;
+            preset.ApplyTo(this);
+        }
 
         public void AssignRole(SquadRole role)
         {

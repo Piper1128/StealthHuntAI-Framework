@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 
@@ -37,6 +38,7 @@ namespace StealthHuntAI.Editor
         private SerializedProperty _sightRange;
         private SerializedProperty _sightAngle;
         private SerializedProperty _hearingRange;
+        private SerializedProperty _preset;
         private SerializedProperty _sightDetectionSpeed;
         private SerializedProperty _sightDecaySpeed;
         private SerializedProperty _suspicionThreshold;
@@ -78,6 +80,7 @@ namespace StealthHuntAI.Editor
             _sightRange = serializedObject.FindProperty("sightRange");
             _sightAngle = serializedObject.FindProperty("sightAngle");
             _hearingRange = serializedObject.FindProperty("hearingRange");
+            _preset = serializedObject.FindProperty("preset");
             _sightDetectionSpeed = serializedObject.FindProperty("sightDetectionSpeed");
             _sightDecaySpeed = serializedObject.FindProperty("sightDecaySpeed");
             _suspicionThreshold = serializedObject.FindProperty("suspicionThreshold");
@@ -103,7 +106,7 @@ namespace StealthHuntAI.Editor
             _searchStrategyOverride = serializedObject.FindProperty("searchStrategyOverride");
             _visitedCellSize = serializedObject.FindProperty("visitedCellSize");
             _animator = serializedObject.FindProperty("animator");
-            _animClipAssignments = serializedObject.FindProperty("animClipAssignments");
+            _animClipAssignments = serializedObject.FindProperty("animSlots");
             _animTransitionDuration = serializedObject.FindProperty("animTransitionDuration");
             _onBecameSuspicious = serializedObject.FindProperty("onBecameSuspicious");
             _onBecameHostile = serializedObject.FindProperty("onBecameHostile");
@@ -124,6 +127,23 @@ namespace StealthHuntAI.Editor
             var ai = (StealthHuntAI)target;
 
             DrawStateHeader(ai);
+            EditorGUILayout.Space(4);
+
+            // Preset section at top
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PropertyField(_preset, new GUIContent("Preset",
+                "Drag a StealthAIPreset asset here to configure all settings at once."));
+            GUI.enabled = _preset.objectReferenceValue != null;
+            if (GUILayout.Button("Apply", GUILayout.Width(60)))
+            {
+                serializedObject.ApplyModifiedProperties();
+                foreach (var t in targets)
+                    ((StealthHuntAI)t).ApplyPreset();
+            }
+            GUI.enabled = true;
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndVertical();
             EditorGUILayout.Space(4);
 
             DrawSection("Perception", ref _foldPerception, () => DrawPerception(ai));
@@ -569,7 +589,33 @@ namespace StealthHuntAI.Editor
             }
 
             EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Clip Assignments", EditorStyles.boldLabel);
+
+            // Summary bar
+            int assigned = 0, total = _animClipAssignments.arraySize;
+            for (int i = 0; i < total; i++)
+                if (GetSlotStatus(_animClipAssignments.GetArrayElementAtIndex(i)) == 2)
+                    assigned++;
+
+            // Header row with summary and Auto Assign
+            EditorGUILayout.BeginHorizontal();
+            Color prevColor = GUI.color;
+
+            string summary = assigned + "/" + total + " slots assigned";
+            Color summaryColor = assigned == total
+                ? new Color(0.35f, 0.9f, 0.4f)
+                : assigned > total * 0.5f
+                    ? new Color(1f, 0.85f, 0.2f)
+                    : new Color(1f, 0.35f, 0.35f);
+
+            GUI.color = summaryColor;
+            EditorGUILayout.LabelField("Clip Assignments  " + summary, EditorStyles.boldLabel);
+            GUI.color = prevColor;
+
+            GUI.enabled = _animClipNames.Length > 0;
+            if (GUILayout.Button("Auto Assign", GUILayout.Width(88)))
+                AutoAssign((StealthHuntAI)target);
+            GUI.enabled = true;
+            EditorGUILayout.EndHorizontal();
 
             if (_animClipNames.Length == 0)
             {
@@ -580,90 +626,143 @@ namespace StealthHuntAI.Editor
             else
             {
                 EditorGUILayout.HelpBox(
-                    "Drag clips into Animator (no transitions needed). Assign clips to logical state names below.",
+                    "Drag clips into Animator (no transitions needed). " +
+                    "Use Auto Assign to match clips automatically, then adjust.",
                     MessageType.None);
             }
 
             EditorGUILayout.Space(4);
 
-            // Draw each assignment row
+            // Draw each AnimSlot row
             for (int i = 0; i < _animClipAssignments.arraySize; i++)
             {
-                SerializedProperty entry = _animClipAssignments.GetArrayElementAtIndex(i);
-                SerializedProperty triggerProp = entry.FindPropertyRelative("trigger");
-                SerializedProperty clipProp = entry.FindPropertyRelative("clipName");
-                SerializedProperty nameProp = entry.FindPropertyRelative("customName");
+                SerializedProperty slot = _animClipAssignments.GetArrayElementAtIndex(i);
+                SerializedProperty triggerProp = slot.FindPropertyRelative("trigger");
+                SerializedProperty clipsProp = slot.FindPropertyRelative("clips");
+                SerializedProperty nameProp = slot.FindPropertyRelative("customName");
 
-                bool isCustom = triggerProp.enumValueIndex
-                    == (int)AnimTrigger.Custom;
+                bool isCustom = triggerProp.enumValueIndex == (int)AnimTrigger.Custom;
 
+                // Slot header row with status dot
                 EditorGUILayout.BeginHorizontal();
 
-                // Trigger enum dropdown
+                // Status dot
+                int slotStatus = GetSlotStatus(slot);
+                Color dotColor = StatusColor(slotStatus);
+                string dotLabel = slotStatus == 2 ? "o" : slotStatus == 1 ? "!" : "X";
+                GUI.color = dotColor;
+                EditorGUILayout.LabelField(dotLabel,
+                    new GUIStyle(EditorStyles.boldLabel) { normal = { textColor = dotColor } },
+                    GUILayout.Width(14));
+                GUI.color = Color.white;
+
                 EditorGUILayout.PropertyField(triggerProp, GUIContent.none,
-                    GUILayout.Width(isCustom ? 80 : 110));
+                    GUILayout.Width(isCustom ? 76 : 96));
 
-                // Custom name field -- only shown for Custom trigger
                 if (isCustom)
-                {
                     nameProp.stringValue = EditorGUILayout.TextField(
-                        nameProp.stringValue, GUILayout.Width(80));
+                        nameProp.stringValue, GUILayout.Width(76));
+
+                // Add clip to this slot
+                if (GUILayout.Button("+", GUILayout.Width(22)))
+                {
+                    clipsProp.InsertArrayElementAtIndex(clipsProp.arraySize);
+                    clipsProp.GetArrayElementAtIndex(clipsProp.arraySize - 1)
+                              .stringValue = "";
                 }
 
-                // Clip dropdown
-                if (_animClipNames.Length > 0)
-                {
-                    string current = clipProp.stringValue;
-                    string[] options = new string[_animClipNames.Length + 1];
-                    options[0] = "(none)";
-                    int idx = 0;
-                    for (int j = 0; j < _animClipNames.Length; j++)
-                    {
-                        options[j + 1] = _animClipNames[j];
-                        if (_animClipNames[j] == current) idx = j + 1;
-                    }
-                    int newIdx = EditorGUILayout.Popup(idx, options);
-                    string newClip = newIdx == 0 ? "" : options[newIdx];
-                    if (newClip != current)
-                        clipProp.stringValue = newClip;
-                }
-                else
-                {
-                    clipProp.stringValue = EditorGUILayout.TextField(clipProp.stringValue);
-                }
-
-                // Remove button
-                if (GUILayout.Button("-", GUILayout.Width(22)))
+                // Remove entire slot
+                if (GUILayout.Button("x", GUILayout.Width(22)))
                 {
                     _animClipAssignments.DeleteArrayElementAtIndex(i);
                     break;
                 }
 
                 EditorGUILayout.EndHorizontal();
+
+                // Clip rows for this slot
+                for (int j = 0; j < clipsProp.arraySize; j++)
+                {
+                    SerializedProperty clipProp = clipsProp.GetArrayElementAtIndex(j);
+
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Space(isCustom ? 162 : 114);
+
+                    if (_animClipNames.Length > 0)
+                    {
+                        string current = clipProp.stringValue;
+                        string[] options = new string[_animClipNames.Length + 1];
+                        options[0] = "(none)";
+                        int idx = 0;
+                        for (int k = 0; k < _animClipNames.Length; k++)
+                        {
+                            options[k + 1] = _animClipNames[k];
+                            if (_animClipNames[k] == current) idx = k + 1;
+                        }
+                        int newIdx = EditorGUILayout.Popup(idx, options);
+                        string newClip = newIdx == 0 ? "" : options[newIdx];
+                        if (newClip != current)
+                            clipProp.stringValue = newClip;
+                    }
+                    else
+                    {
+                        clipProp.stringValue = EditorGUILayout.TextField(clipProp.stringValue);
+                    }
+
+                    // Remove clip
+                    if (GUILayout.Button("-", GUILayout.Width(22)))
+                    {
+                        clipsProp.DeleteArrayElementAtIndex(j);
+                        break;
+                    }
+
+                    EditorGUILayout.EndHorizontal();
+                }
+
+                // Show "random" label if multiple clips
+                if (clipsProp.arraySize > 1)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Space(isCustom ? 162 : 114);
+                    GUIStyle small = new GUIStyle(EditorStyles.miniLabel);
+                    small.normal.textColor = new Color(0.5f, 0.8f, 0.5f);
+                    EditorGUILayout.LabelField(
+                        "[random: " + clipsProp.arraySize + " clips]",
+                        small);
+                    EditorGUILayout.EndHorizontal();
+                }
+
+                EditorGUILayout.Space(2);
             }
 
             EditorGUILayout.Space(4);
 
             // Add buttons
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button("+ Auto Trigger"))
+            if (GUILayout.Button("+ Trigger Slot"))
             {
                 _animClipAssignments.InsertArrayElementAtIndex(_animClipAssignments.arraySize);
                 var e = _animClipAssignments.GetArrayElementAtIndex(
                     _animClipAssignments.arraySize - 1);
                 e.FindPropertyRelative("trigger").enumValueIndex = 0;
-                e.FindPropertyRelative("clipName").stringValue = "";
                 e.FindPropertyRelative("customName").stringValue = "";
+                var clips = e.FindPropertyRelative("clips");
+                clips.ClearArray();
+                clips.InsertArrayElementAtIndex(0);
+                clips.GetArrayElementAtIndex(0).stringValue = "";
             }
-            if (GUILayout.Button("+ Custom"))
+            if (GUILayout.Button("+ Custom Slot"))
             {
                 _animClipAssignments.InsertArrayElementAtIndex(_animClipAssignments.arraySize);
                 var e = _animClipAssignments.GetArrayElementAtIndex(
                     _animClipAssignments.arraySize - 1);
                 e.FindPropertyRelative("trigger").enumValueIndex =
                     (int)AnimTrigger.Custom;
-                e.FindPropertyRelative("clipName").stringValue = "";
                 e.FindPropertyRelative("customName").stringValue = "MyAnim";
+                var clips = e.FindPropertyRelative("clips");
+                clips.ClearArray();
+                clips.InsertArrayElementAtIndex(0);
+                clips.GetArrayElementAtIndex(0).stringValue = "";
             }
             EditorGUILayout.EndHorizontal();
         }
@@ -679,7 +778,7 @@ namespace StealthHuntAI.Editor
             if (controller == null) return new string[0];
 
             var clips = controller.animationClips;
-            var names = new System.Collections.Generic.List<string>();
+            var names = new List<string>();
             foreach (var clip in clips)
             {
                 if (clip != null && !names.Contains(clip.name))
@@ -688,6 +787,142 @@ namespace StealthHuntAI.Editor
             names.Sort();
             return names.ToArray();
         }
+
+        // ---------- Auto Assign ----------------------------------------------
+
+        // Fuzzy match table: trigger -> keywords that indicate a match
+        private static readonly Dictionary<AnimTrigger, string[]> _triggerKeywords
+            = new Dictionary<AnimTrigger, string[]>
+        {
+            { AnimTrigger.Idle,        new[] { "idle", "stand", "rifle idle" } },
+            { AnimTrigger.Walk,        new[] { "walk", "walking", "patrol" } },
+            { AnimTrigger.Alerted,     new[] { "alert", "alert idle", "rifle idle alert", "look" } },
+            { AnimTrigger.Investigate, new[] { "investigate", "crouch walk", "sneak" } },
+            { AnimTrigger.Search,      new[] { "search", "look around", "scan" } },
+            { AnimTrigger.Pursuing,    new[] { "chase", "pursue", "run hostile", "rifle run", "run", "sprint", "jog" } },
+            { AnimTrigger.Shooting,    new[] { "shoot", "fire", "firing", "firing rifle", "aim" } },
+            { AnimTrigger.LostTarget,  new[] { "lost", "confused", "look around" } },
+            { AnimTrigger.Return,      new[] { "return", "walk back", "walking" } },
+            { AnimTrigger.Death,       new[] { "death", "die", "dying", "dead", "fall" } },
+        };
+
+        // Custom slot keyword matches
+        private static readonly Dictionary<string, string[]> _customKeywords
+            = new Dictionary<string, string[]>
+        {
+            { "HitReaction", new[] { "hit", "hit reaction", "react", "flinch" } },
+            { "Reload",      new[] { "reload", "reloading" } },
+            { "TakeCover",   new[] { "take cover", "cover", "dive" } },
+            { "PeekLeft",    new[] { "peek left", "lean left" } },
+            { "PeekRight",   new[] { "peek right", "lean right" } },
+        };
+
+        private string FuzzyMatch(string clipName, string[] keywords)
+        {
+            string lower = clipName.ToLower();
+            foreach (var kw in keywords)
+                if (lower.Contains(kw.ToLower())) return clipName;
+            return null;
+        }
+
+        private void AutoAssign(StealthHuntAI ai)
+        {
+            if (_animClipNames.Length == 0) return;
+
+            Undo.RecordObject(ai, "Auto Assign Animations");
+
+            // Ensure default slots exist first
+            ai.EnsureDefaultAnimAssignmentsPublic();
+
+            // Match trigger slots -- access via index so we modify actual list objects
+            foreach (var kv in _triggerKeywords)
+            {
+                for (int i = 0; i < ai.animSlots.Count; i++)
+                {
+                    if (ai.animSlots[i].trigger != kv.Key) continue;
+
+                    // Find best matching clip
+                    string bestClip = null;
+                    foreach (var clipName in _animClipNames)
+                    {
+                        if (FuzzyMatch(clipName, kv.Value) != null)
+                        {
+                            bestClip = clipName;
+                            break;
+                        }
+                    }
+
+                    if (bestClip == null) continue;
+
+                    var slot = ai.animSlots[i];
+                    if (slot.clips.Count == 0)
+                        slot.clips.Add(bestClip);
+                    else if (string.IsNullOrEmpty(slot.clips[0]))
+                        slot.clips[0] = bestClip;
+                    // Already assigned -- don't overwrite
+                }
+            }
+
+            // Match custom slots
+            foreach (var kv in _customKeywords)
+            {
+                foreach (var clipName in _animClipNames)
+                {
+                    if (FuzzyMatch(clipName, kv.Value) == null) continue;
+
+                    bool found = false;
+                    for (int i = 0; i < ai.animSlots.Count; i++)
+                    {
+                        if (ai.animSlots[i].trigger != AnimTrigger.Custom) continue;
+                        if (ai.animSlots[i].customName != kv.Key) continue;
+
+                        var slot = ai.animSlots[i];
+                        if (slot.clips.Count == 0) slot.clips.Add(clipName);
+                        else if (string.IsNullOrEmpty(slot.clips[0])) slot.clips[0] = clipName;
+                        else if (!slot.clips.Contains(clipName)) slot.clips.Add(clipName);
+                        found = true;
+                        break;
+                    }
+
+                    if (!found)
+                        ai.animSlots.Add(new AnimSlot
+                        {
+                            trigger = AnimTrigger.Custom,
+                            customName = kv.Key,
+                            clips = new List<string> { clipName }
+                        });
+                    break;
+                }
+            }
+
+            EditorUtility.SetDirty(ai);
+            serializedObject.Update();
+        }
+
+        // Return status: 0=missing critical, 1=missing optional, 2=ok
+        private int GetSlotStatus(SerializedProperty slot)
+        {
+            var clips = slot.FindPropertyRelative("clips");
+            bool hasClip = false;
+            for (int i = 0; i < clips.arraySize; i++)
+                if (!string.IsNullOrEmpty(clips.GetArrayElementAtIndex(i).stringValue))
+                { hasClip = true; break; }
+
+            if (hasClip) return 2;
+
+            // Check if critical
+            var trigger = (AnimTrigger)slot.FindPropertyRelative("trigger").enumValueIndex;
+            bool critical = trigger == AnimTrigger.Idle || trigger == AnimTrigger.Walk
+                         || trigger == AnimTrigger.Death;
+            return critical ? 0 : 1;
+        }
+
+        private static Color StatusColor(int status) => status switch
+        {
+            0 => new Color(1f, 0.35f, 0.35f),
+            1 => new Color(1f, 0.85f, 0.2f),
+            _ => new Color(0.35f, 0.9f, 0.4f)
+        };
 
         // ---------- Events ----------------------------------------------------
 

@@ -40,6 +40,10 @@ namespace StealthHuntAI
 
         private readonly List<StealthHuntAI> _units = new List<StealthHuntAI>();
         private AlertState _squadAlertState = AlertState.Passive;
+        private float _lastFlankTime = -999f;
+        private float _lastRoleEvalTime = -999f;
+        private const float FlankCooldown = 8f;
+        private const float RoleEvalInterval = 2f;
 
         // ---------- Constructor -----------------------------------------------
 
@@ -111,10 +115,11 @@ namespace StealthHuntAI
         {
             if (target == null || _units.Count == 0) return;
             if (_squadAlertState == AlertState.Passive) return;
-
-            // Only assign roles if we have actual intel -- never use target.Position directly
-            // Using target.Position gives units wallhack-like knowledge of the player
             if (SharedConfidence <= 0.1f) return;
+
+            // Rate limit role evaluation -- no need to run every frame
+            if (Time.time - _lastRoleEvalTime < RoleEvalInterval) return;
+            _lastRoleEvalTime = Time.time;
 
             Vector3 targetPos = SharedLastKnown;
 
@@ -149,10 +154,12 @@ namespace StealthHuntAI
                     role = SquadRole.Tracker;
                     hasTracker = true;
                 }
-                else if (!hasFlanker && candidates.Count >= 2)
+                else if (!hasFlanker && candidates.Count >= 2
+                      && Time.time - _lastFlankTime >= FlankCooldown)
                 {
                     role = SquadRole.Flanker;
                     hasFlanker = true;
+                    _lastFlankTime = Time.time;
                     AssignFlankPoint(unit, targetPos);
                 }
                 else if (!hasOverwatch && candidates.Count >= 3)

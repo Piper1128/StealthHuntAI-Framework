@@ -1,5 +1,87 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1001 &908030658028943357
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 7250804296406222059}
+    m_Modifications:
+    - target: {fileID: 1179385219760324, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 1276545089594912, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 1286824216429640, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 1415592320102066, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Name
+      value: Russian AssaultRifle
+      objectReference: {fileID: 0}
+    - target: {fileID: 1415592320102066, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 1922294430700754, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.12807485
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.24507186
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0.003312991
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: -0.47675803
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0.51861256
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0.5395322
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0.46113762
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: -82.794
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 163.25
+      objectReference: {fileID: 0}
+    - target: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: -72.945
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+--- !u!4 &903174110462976187 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4856559645693766, guid: 55e187f4ea6f8f6409d32a77be7e0e75, type: 3}
+  m_PrefabInstance: {fileID: 908030658028943357}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &9013291498854202147
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -14,31 +96,31 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 18.49816
+      value: -83.2726
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -1.2927575
+      value: -1.2927585
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 6.773687
+      value: 7.6523046
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 1
+      value: -0.0039966176
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: -0.999992
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -46,7 +128,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
+      value: -180.458
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
@@ -290,7 +372,7 @@ PrefabInstance:
       objectReference: {fileID: 9100000, guid: faba0656f0b04a747ba0b8b4da8749ad, type: 2}
     - target: {fileID: 5866666021909216657, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_CullingMode
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5866666021909216657, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       propertyPath: m_ApplyRootMotion
@@ -334,7 +416,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 1852576806548013000, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 903174110462976187}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       insertIndex: -1
@@ -345,10 +430,18 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
       insertIndex: -1
       addedObject: {fileID: 4122779359751285265}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 8817111916941598302}
   m_SourcePrefab: {fileID: 100100000, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
 --- !u!95 &3206335837847422642 stripped
 Animator:
   m_CorrespondingSourceObject: {fileID: 5866666021909216657, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
+  m_PrefabInstance: {fileID: 9013291498854202147}
+  m_PrefabAsset: {fileID: 0}
+--- !u!4 &7250804296406222059 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 1852576806548013000, guid: e52a3ac63e5d64146a9d540e47a13279, type: 3}
   m_PrefabInstance: {fileID: 9013291498854202147}
   m_PrefabAsset: {fileID: 0}
 --- !u!1 &8202406276971202162 stripped
@@ -384,11 +477,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::StealthHuntAI.Demo.GuardWeapon
   shootRange: 15
-  damage: 50
-  spread: 4
+  damage: 24
+  spread: 4.05
   shootMemory: 1.5
-  fireMode: 1
-  fireInterval: 1.5
+  fireMode: 0
+  fireInterval: 0.8
   burstCount: 3
   burstRate: 0.12
   muzzleFlash: {fileID: 0}
@@ -404,6 +497,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7eca3f2ed165ed045ba38ee628af5e72, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::StealthHuntAI.StealthHuntAI
+  preset: {fileID: 0}
   sightRange: 40
   sightAngle: 120
   hearingRange: 10
@@ -412,7 +506,7 @@ MonoBehaviour:
   suspicionThreshold: 0.3
   hostileThreshold: 0.7
   personality: 1
-  behaviourMode: 0
+  behaviourMode: 1
   patrolSpeedMultiplier: 0.55
   chaseSpeedMultiplier: 1
   patrolPoints: []
@@ -424,8 +518,8 @@ MonoBehaviour:
   guardZoneWaitTime: 1.5
   eyeHeight: 1.6
   searchDuration: 10
-  searchRadius: 8
-  searchPointCount: 4
+  searchRadius: 30.6
+  searchPointCount: 3
   searchHeightRange: 0
   movementProvider: {fileID: 0}
   searchStrategyOverride: {fileID: 0}
@@ -434,40 +528,56 @@ MonoBehaviour:
   manualRole: 0
   animator: {fileID: 3206335837847422642}
   animTransitionDuration: 0.15
-  animClipAssignments:
+  enableAimIK: 1
+  aimBodyWeight: 0.3
+  aimHeadWeight: 0.7
+  aimEyesWeight: 0
+  aimTargetHeightOffset: 0.8
+  animSlots:
+  - trigger: 10
+    clips:
+    - Hit Reaction
+    customName: HitReaction
   - trigger: 0
-    clipName: Rifle Idle
+    clips:
+    - Rifle Idle
     customName: 
   - trigger: 1
-    clipName: Walking Rifle
+    clips:
+    - Rifle Crouch Walk
     customName: 
   - trigger: 2
-    clipName: Walking Rifle
+    clips:
+    - Walking Rifle
     customName: 
   - trigger: 3
-    clipName: Rifle Idle alert
+    clips:
+    - Rifle Idle alert
     customName: 
   - trigger: 4
-    clipName: Walking Rifle
+    clips:
+    - Rifle Crouch Walk
     customName: 
   - trigger: 5
-    clipName: Rifle Crouch Walk
+    clips:
+    - Rifle Crouch Walk
     customName: 
   - trigger: 6
-    clipName: Run Rifle
+    clips:
+    - Run Rifle
     customName: 
   - trigger: 7
-    clipName: Rifle Fire
+    clips:
+    - Rifle Fire
     customName: 
   - trigger: 8
-    clipName: Rifle Crouch Walk
+    clips:
+    - Rifle Crouch Walk
     customName: 
   - trigger: 9
-    clipName: Death
-    customName: Shoot
-  - trigger: 10
-    clipName: Hit Reaction
-    customName: HitReaction
+    clips:
+    - Death
+    customName: 
   startingMorale: 1
   persistMorale: 0
   onBecameSuspicious:
@@ -482,3 +592,41 @@ MonoBehaviour:
   onReturnedToPassive:
     m_PersistentCalls:
       m_Calls: []
+--- !u!114 &8817111916941598302
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8202406276971202162}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f96c91391b40d5242a67b9b60f29c28d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StealthHuntAI.AwarenessSensor
+  sightRange: 15
+  sightAngle: 90
+  peripheralRange: 5
+  sightCheckPoints: 3
+  sightCheckSpread: 0.4
+  sightFollowHeadBone: 1
+  reactionTime: 0.15
+  sightRiseSpeed: 2
+  sightDecaySpeed: 0.3
+  hearingRange: 10
+  hearingRiseSpeed: 3
+  soundSuspicionThreshold: 0.4
+  soundHostileThreshold: 0.8
+  useLightDetection: 1
+  darknessThreshold: 0.3
+  darknessFactor: 0.2
+  lightSearchRadius: 12
+  decaySpeed: 0.1
+  noiseAmount: 0.05
+  sightBlockers:
+    serializedVersion: 2
+    m_Bits: 65
+  targetLayers:
+    serializedVersion: 2
+    m_Bits: 384
+  _layerMasksConfigured: 1

@@ -144,15 +144,25 @@ namespace StealthHuntAI.Demo
                 muzzleFlash.Play();
 
             Vector3 origin = transform.position + Vector3.up * 1.4f;
-            Vector3 targetPos = _ai.LastKnownPosition.HasValue
-                ? _ai.LastKnownPosition.Value + Vector3.up * 0.8f
-                : origin + transform.forward * shootRange;
+
+            // Use actual target position if visible, otherwise last known
+            // This ensures raycast hits at correct height regardless of distance
+            Vector3 targetPos;
+            if (_sensor != null && _sensor.CanSeeTarget && _ai.GetTarget() != null)
+                targetPos = _ai.GetTarget().PerceptionOrigin;
+            else if (_ai.LastKnownPosition.HasValue)
+                targetPos = _ai.LastKnownPosition.Value + Vector3.up * 0.8f;
+            else
+                targetPos = origin + transform.forward * shootRange;
 
             Vector3 dir = (targetPos - origin).normalized;
             dir += Random.insideUnitSphere * (spread * Mathf.Deg2Rad);
             dir = dir.normalized;
 
-            if (Physics.Raycast(origin, dir, out RaycastHit hit, shootRange))
+            // Exclude own layer from raycast so guard doesn't shoot himself
+            int ignoreMask = ~(1 << gameObject.layer);
+
+            if (Physics.Raycast(origin, dir, out RaycastHit hit, shootRange, ignoreMask))
             {
                 var playerHealth = hit.collider.GetComponentInParent<PlayerHealth>();
                 if (playerHealth != null)
