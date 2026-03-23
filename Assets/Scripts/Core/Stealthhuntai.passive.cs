@@ -64,6 +64,14 @@ namespace StealthHuntAI
 
         private void TickPatrolling()
         {
+            // Use tactical patrol if no waypoints assigned and points exist
+            if ((patrolPoints == null || patrolPoints.Length == 0)
+             && PatrolRegistry.Count > 0)
+            {
+                _tacticalPatrol.Tick(this);
+                return;
+            }
+
             if (patrolPoints == null || patrolPoints.Length == 0) return;
 
             if (_waitingAtWaypoint)

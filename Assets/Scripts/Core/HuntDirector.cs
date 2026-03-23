@@ -187,28 +187,26 @@ namespace StealthHuntAI
 
                     float dist = Vector3.Distance(sourcePos, unit.transform.position);
 
-                    if (dist <= alertRadius)
-                    {
-                        // Within radius -- share intel and force hostile
-                        if (sourceBoard != null)
-                        {
-                            var board = SquadBlackboard.Get(unit.squadID);
-                            board?.ShareIntel(sourceBoard.SharedLastKnown,
-                                              sourceBoard.SharedConfidence * 0.8f);
-                        }
-                        unit.ForceHostileSilent();
-                    }
-                    else if (unit.squadID == source.squadID)
-                    {
-                        // Same squad but out of radius -- alert and send to rendezvous
-                        // Use source position as rally point so they join the fight
-                        unit.ForceHostileSilent();
+                    if (unit.squadID != source.squadID) continue;
 
-                        // Share source position as low-confidence intel
-                        // so GOAP knows where to go
+                    // Always alert all squad members
+                    unit.ForceHostileSilent();
+
+                    if (sourceBoard != null)
+                    {
                         var board = SquadBlackboard.Get(unit.squadID);
-                        if (board != null)
-                            board.ShareIntel(sourcePos, 0.4f);
+                        if (dist <= alertRadius)
+                        {
+                            // Close -- full intel, guards know where to go
+                            board?.ShareIntel(sourceBoard.SharedLastKnown,
+                                sourceBoard.SharedConfidence * 0.8f);
+                        }
+                        else
+                        {
+                            // Far -- very low confidence so guards SEARCH
+                            // toward source direction instead of rushing blindly
+                            board?.ShareIntel(sourcePos, 0.2f);
+                        }
                     }
                 }
             }
@@ -1071,8 +1069,12 @@ namespace StealthHuntAI
 
             // First check direct line -- if clear use it directly
             Vector3 toSound = soundPos - unitPos;
+            // Use registered mask or fall back to Default layer only
+            LayerMask mask = _sightBlockerSet
+                ? _sightBlockerMask
+                : LayerMask.GetMask("Default");
             bool hasLine = !Physics.Raycast(unitPos, toSound.normalized,
-                                                 dist, _sightBlockerMask);
+                                                 dist, mask);
 
             if (hasLine)
             {
@@ -1109,19 +1111,23 @@ namespace StealthHuntAI
             float pathFalloff = 1f - Mathf.Clamp01(pathLength / radius);
 
             // Corner penalty -- each corner muffles significantly
-            float cornerPenalty = Mathf.Pow(0.45f, corners);
+            // Gunshots travel well around corners -- use higher base
+            float cornerBase = intensity >= 0.8f ? 0.8f : 0.55f;
+            float cornerPenalty = Mathf.Pow(cornerBase, corners);
 
             scaledIntensity = intensity * pathFalloff * cornerPenalty;
         }
 
         // Shared raycast buffer and layer mask for sound propagation
         private static readonly RaycastHit[] _raycastBuffer = new RaycastHit[16];
-        private static LayerMask _sightBlockerMask = -1;
+        private static LayerMask _sightBlockerMask = 0;
+        private static bool _sightBlockerSet = false;
 
         /// <summary>Called by AwarenessSensor to share its sight blocker mask.</summary>
         public static void RegisterSightBlockers(LayerMask mask)
         {
             _sightBlockerMask = mask;
+            _sightBlockerSet = true;
         }
 
         /// <summary>

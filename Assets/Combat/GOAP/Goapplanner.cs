@@ -53,9 +53,18 @@ namespace StealthHuntAI.Combat
         /// Find the lowest-cost action sequence from current state to goal.
         /// Returns null if no plan found.
         /// </summary>
+        /// <summary>
+        /// Backwards A* -- searches from goal state toward current state.
+        /// Faster than forward search: goal space is smaller than action space.
+        /// Per F.E.A.R. GOAP design by Jeff Orkin.
+        /// </summary>
         public Plan BuildPlan(WorldState current, WorldState goal,
                                List<GoapAction> actions, StealthHuntAI unit)
         {
+            // Sort actions by priority descending -- higher priority checked first
+            var sortedActions = new List<GoapAction>(actions);
+            sortedActions.Sort((a, b) => b.Priority.CompareTo(a.Priority));
+
             var open = new List<Node>();
             var closed = new List<Node>();
 
@@ -86,10 +95,10 @@ namespace StealthHuntAI.Combat
                 int depth = GetDepth(current_node);
                 if (depth >= MaxDepth) continue;
 
-                // Expand
-                for (int i = 0; i < actions.Count; i++)
+                // Expand -- sorted by priority
+                for (int i = 0; i < sortedActions.Count; i++)
                 {
-                    var action = actions[i];
+                    var action = sortedActions[i];
                     if (!action.CheckPreconditions(current_node.State)) continue;
 
                     WorldState next = action.ApplyEffects(current_node.State);

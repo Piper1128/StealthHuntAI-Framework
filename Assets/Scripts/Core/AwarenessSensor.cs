@@ -41,16 +41,16 @@ namespace StealthHuntAI
         [Range(0.05f, 3f)] public float sightDecaySpeed = 0.08f; // slow -- player stays suspicious longer
 
         [Header("Hearing")]
-        [Range(1f, 40f)] public float hearingRange = 10f;
+        [Range(1f, 60f)] public float hearingRange = 20f;
 
         [Tooltip("How fast awareness rises from continuous ambient sound.")]
         [Range(0.1f, 5f)] public float hearingRiseSpeed = 3.0f;
 
         [Tooltip("Sound intensity (post-propagation) that immediately floors awareness to suspicious.")]
-        [Range(0.1f, 1f)] public float soundSuspicionThreshold = 0.4f;
+        [Range(0.01f, 1f)] public float soundSuspicionThreshold = 0.15f;
 
         [Tooltip("Sound intensity (post-propagation) that immediately floors awareness to hostile.")]
-        [Range(0.1f, 1f)] public float soundHostileThreshold = 0.8f;
+        [Range(0.01f, 1f)] public float soundHostileThreshold = 0.35f;
 
         [Header("Light Detection")]
         [Tooltip("If true, darkness reduces sight detection speed.")]
@@ -496,11 +496,17 @@ namespace StealthHuntAI
                                Vector3 arrivalDir = default)
         {
             float distance = Vector3.Distance(transform.position, position);
-            if (distance > hearingRange) return;
             if (scaledIntensity <= 0f) return;
 
+            // High intensity sounds (gunshots) bypass hearingRange check --
+            // BroadcastSound already filtered by gunshotRadius
+            if (scaledIntensity < soundHostileThreshold
+             && distance > hearingRange) return;
+
             // High intensity sounds immediately floor awareness
-            if (scaledIntensity >= soundHostileThreshold)
+            // Original intensity >= 0.8 = gunshot -- always Hostile if heard at all
+            bool isGunshot = scaledIntensity >= 0.35f;
+            if (isGunshot || scaledIntensity >= soundHostileThreshold)
             {
                 AwarenessLevel = Mathf.Max(AwarenessLevel, hostileThresh);
             }

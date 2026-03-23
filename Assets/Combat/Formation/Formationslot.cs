@@ -18,9 +18,6 @@ namespace StealthHuntAI.Combat
         /// <summary>Unit currently assigned to this slot.</summary>
         public StealthHuntAI AssignedUnit;
 
-        /// <summary>Preferred squad role for this slot.</summary>
-        public SquadRole PreferredRole;
-
         /// <summary>True if a unit is assigned to this slot.</summary>
         public bool IsOccupied => AssignedUnit != null;
 

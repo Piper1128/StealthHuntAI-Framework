@@ -47,7 +47,7 @@ namespace StealthHuntAI.Combat
         public bool UseTacticalZoneProvider = true;
 
         [Header("Performance")]
-        [Range(1, 8)] public int MaxRequestsPerFrame = 2;
+        [Range(1, 8)] public int MaxRequestsPerFrame = 1; // 1 per frame -- spread load across 14 guards
         [Range(0f, 1f)] public float ScoreThreshold = 0.1f; // discard spots below this
 
         [Header("Debug")]
@@ -265,6 +265,11 @@ namespace StealthHuntAI.Combat
         /// Synchronous fallback -- runs entire pipeline on main thread.
         /// Use for simple projects or when async timing doesn't matter.
         /// </summary>
+        // Cache last sync result per unit -- avoid full evaluation every replan
+        private readonly Dictionary<StealthHuntAI, (TacticalSpot spot, float time)>
+            _syncCache = new Dictionary<StealthHuntAI, (TacticalSpot, float)>();
+        private const float SyncCacheInterval = 1.2f;
+
         public TacticalSpot EvaluateSync(TacticalContext ctx)
         {
             var candidates = GatherCandidates(ctx);

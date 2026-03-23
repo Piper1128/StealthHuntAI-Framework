@@ -276,6 +276,9 @@ namespace StealthHuntAI
         public AlertState CurrentAlertState { get; private set; } = AlertState.Passive;
         public SubState CurrentSubState { get; private set; } = SubState.Idle;
         public SquadRole ActiveRole { get; private set; } = SquadRole.Dynamic;
+        /// <summary>True if this unit is dead. Set by health system via SetDead().</summary>
+        public bool IsDead { get; private set; }
+        public void SetDead() => IsDead = true;
 
         public float AwarenessLevel => _sensor != null ? _sensor.AwarenessLevel : 0f;
 
@@ -319,6 +322,8 @@ namespace StealthHuntAI
         private bool _pingPongForward = true;
         private float _waypointWaitTimer;
         private bool _waitingAtWaypoint;
+        private readonly TacticalPatrolController _tacticalPatrol
+            = new TacticalPatrolController();
 
         private float _stateTimer;
         private float _searchTimer;
@@ -339,8 +344,12 @@ namespace StealthHuntAI
         private bool _wasInCombat;
         private bool _suppressAlertPropagation;
         private float _suspiciousDwellTimer;
-        private float _rotationVelocity;   // for smooth inertia
+        private float _rotationVelocity;
         private float _currentYaw;
+        private float _stuckTimer;
+        private Vector3 _lastStuckCheckPos;
+        private float _deadBodyScanTimer;
+        private const float DeadBodyScanInterval = 0.8f;
         private float _lastSeenTimer;      // time since last saw player
         private const float CombatMemoryTime = 8f; // stay hostile this long after losing sight
         private float _lookAroundTimer;
@@ -424,7 +433,59 @@ namespace StealthHuntAI
 
             TickHFSM();
             TickMoraleRecovery();
+            TickDeadBodyDetection();
             UpdateAnimator();
+        }
+
+        /// <summary>
+        /// Scan for dead squad members in sight range.
+        /// Finding a dead body instantly triggers Suspicious or Hostile
+        /// depending on current alert state.
+        /// </summary>
+        private void TickDeadBodyDetection()
+        {
+            if (IsDead || CurrentAlertState == AlertState.Hostile) return;
+
+            _deadBodyScanTimer += Time.deltaTime;
+            if (_deadBodyScanTimer < DeadBodyScanInterval) return;
+            _deadBodyScanTimer = 0f;
+
+            var units = HuntDirector.AllUnits;
+            for (int i = 0; i < units.Count; i++)
+            {
+                var unit = units[i];
+                if (unit == null || unit == this) continue;
+                if (!unit.IsDead) continue;
+
+                float dist = Vector3.Distance(transform.position, unit.transform.position);
+                if (dist > sightRange) continue;
+
+                // Check LOS to dead body
+                Vector3 dir = unit.transform.position - transform.position;
+                if (Physics.Raycast(transform.position + Vector3.up * 1.6f,
+                    dir.normalized, dir.magnitude, LayerMask.GetMask("Default", "Environment")))
+                    continue; // blocked
+
+                // Found dead body -- react based on current state
+                if (CurrentAlertState == AlertState.Passive)
+                {
+                    // Jump straight to Suspicious with high awareness
+                    if (_sensor != null)
+                        _sensor.AwarenessLevel = Mathf.Max(
+                            _sensor.AwarenessLevel, suspicionThreshold + 0.15f);
+                    HuntDirector.BroadcastSound(
+                        unit.transform.position, 0.6f, 20f);
+                }
+                else if (CurrentAlertState == AlertState.Suspicious)
+                {
+                    // Go Hostile -- dead body while suspicious = danger
+                    ForceHostile();
+                    // Share dead body position as threat intel
+                    var board = SquadBlackboard.Get(squadID);
+                    board?.ShareIntel(unit.transform.position, 0.35f);
+                }
+                break; // one dead body is enough
+            }
         }
 
         // ---------- Auto-Configure --------------------------------------------
@@ -464,10 +525,15 @@ namespace StealthHuntAI
                 _agent.acceleration = 12f;
                 _agent.angularSpeed = 200f;
                 _agent.autoBraking = true;
-                _agent.radius = Mathf.Max(_agent.radius, 0.35f);
-                _agent.obstacleAvoidanceType = UnityEngine.AI.ObstacleAvoidanceType.HighQualityObstacleAvoidance;
-                // Unique priority prevents agents locking up when heading same direction
-                _agent.avoidancePriority = 30 + Mathf.Abs(GetInstanceID() % 40);
+                // Minimal radius -- guards pass freely in narrow corridors
+                _agent.radius = 0.15f;
+                // No avoidance -- GOAP spread destinations handle separation
+                // Avoidance causes deadlocks in tight spaces
+                _agent.obstacleAvoidanceType = UnityEngine.AI.ObstacleAvoidanceType.NoObstacleAvoidance;
+                _agent.avoidancePriority = 50;
+                // Enable stair/ramp traversal -- required for multi-floor navigation
+                _agent.autoTraverseOffMeshLink = true;
+                _agent.baseOffset = Mathf.Max(_agent.baseOffset, 0f);
             }
 
             if (animator != null)
@@ -1141,12 +1207,16 @@ namespace StealthHuntAI
         {
             if (_agent == null) return;
             _agent.isStopped = false;
-            _agent.stoppingDistance = 0.5f;
+            _agent.stoppingDistance = 0.1f;
             float baseSpeed = _baseAgentSpeed > 0.1f ? _baseAgentSpeed : _agent.speed;
             float chase = chaseSpeedMultiplier > 0.1f ? chaseSpeedMultiplier : 1f;
             _agent.speed = Mathf.Max(0.5f, baseSpeed * chase * speedMultiplier);
-            // Sample onto NavMesh before setting destination
-            if (UnityEngine.AI.NavMesh.SamplePosition(pos, out var hit, 3f,
+            // Sample onto NavMesh -- small radius prevents wall snap on ramps
+            UnityEngine.AI.NavMeshHit hit;
+            if (UnityEngine.AI.NavMesh.SamplePosition(pos, out hit, 1.5f,
+                UnityEngine.AI.NavMesh.AllAreas))
+                _agent.SetDestination(hit.position);
+            else if (UnityEngine.AI.NavMesh.SamplePosition(pos, out hit, 4f,
                 UnityEngine.AI.NavMesh.AllAreas))
                 _agent.SetDestination(hit.position);
             else
@@ -1155,6 +1225,12 @@ namespace StealthHuntAI
 
         /// <summary>Stop movement. For use by Combat Pack.</summary>
         public void CombatStop() => StopMoving();
+
+        /// <summary>Move to position. For use by TacticalPatrolController.</summary>
+        public void PatrolMoveTo(Vector3 pos) => MoveTo(pos);
+
+        /// <summary>Stop movement. For use by TacticalPatrolController.</summary>
+        public void PatrolStop() => StopMoving();
 
         /// <summary>Face toward a world position smoothly. For use by Combat Pack.</summary>
         public void CombatFaceToward(Vector3 pos, float speed = 180f)

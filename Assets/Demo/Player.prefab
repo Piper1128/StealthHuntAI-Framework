@@ -511,7 +511,7 @@ Transform:
   m_GameObject: {fileID: 4056770207055479017}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -7.5699997, y: 1.8200002, z: -16.13}
+  m_LocalPosition: {x: -7.5699997, y: 1.8200002, z: -16.129997}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -708,10 +708,11 @@ MonoBehaviour:
   mouseSensitivity: 0.15
   maxLookAngle: 80
   gravity: -18
-  walkNoiseRadius: 4
-  sprintNoiseRadius: 9
-  crouchNoiseRadius: 1.5
-  proneNoiseRadius: 0.3
+  jumpHeight: 1.2
+  walkNoiseRadius: 10
+  sprintNoiseRadius: 20
+  crouchNoiseRadius: 5
+  proneNoiseRadius: 1
   noiseInterval: 0.4
 --- !u!114 &3660724314265512947
 MonoBehaviour:
@@ -727,13 +728,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: StealthHuntAI.Demo::StealthHuntAI.Demo.PlayerHealth
   maxHealth: 100
   startHealth: 100
-  armorType: 0
+  armorType: 1
   armorPoints: 100
   enableRegen: 1
   regenDelay: 5
   regenRate: 8
   regenMax: 70
-  respawnDelay: 3
+  respawnDelay: 0
   onDamaged:
     m_PersistentCalls:
       m_Calls: []
@@ -776,6 +777,15 @@ MonoBehaviour:
   normalFOV: 70
   adsSpeed: 10
   adsAccuracyBonus: 0.5
+  gunshotRadius: 80
+  gunshotIntensity: 0.9
+  isSuppressed: 0
+  suppressedRadius: 20
+  suppressedIntensity: 0.15
+  meleeKillRadius: 2.5
+  meleeKillIntensity: 0.2
+  stealthKillRadius: 1
+  stealthKillIntensity: 0.05
   baseSpread: 0.02
   sprintSpread: 0.08
   moveSpread: 0.04
@@ -785,4 +795,5 @@ MonoBehaviour:
   playerCamera: {fileID: 5559608543459116428}
   shootLayers:
     serializedVersion: 2
-    m_Bits: 128
+    m_Bits: 704
+  muzzle: {fileID: 0}

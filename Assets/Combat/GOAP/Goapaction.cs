@@ -16,6 +16,15 @@ namespace StealthHuntAI.Combat
         /// <summary>Display name shown in Tactical Inspector.</summary>
         public abstract string Name { get; }
 
+        /// <summary>
+        /// If true this action can be interrupted by CombatEventBus events.
+        /// Set false for critical actions like TakeCover that must complete.
+        /// </summary>
+        public virtual bool IsInterruptible => true;
+
+        /// <summary>Action priority -- higher interrupts lower when planning.</summary>
+        public virtual int Priority => 0;
+
         /// <summary>Formation this action prefers.</summary>
         public virtual FormationType PreferredFormation => FormationType.None;
 
@@ -61,9 +70,13 @@ namespace StealthHuntAI.Combat
 
         // ---------- Helpers --------------------------------------------------
 
+        private IShootable _cachedShootable;
+
         protected void FireAt(StealthHuntAI unit, Vector3 targetPos)
         {
-            unit.GetComponent<IShootable>()?.TryShoot(targetPos);
+            if (_cachedShootable == null)
+                _cachedShootable = unit.GetComponent<IShootable>();
+            _cachedShootable?.TryShoot(targetPos);
         }
 
         protected void FaceToward(StealthHuntAI unit, Vector3 pos, float speed = 150f)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace StealthHuntAI.Combat
@@ -10,10 +11,15 @@ namespace StealthHuntAI.Combat
     public class TakeCoverAction : GoapAction
     {
         public override string Name => "TakeCover";
+        public override bool IsInterruptible => false; // must reach cover
+        public override int Priority => 8;
         public override FormationType PreferredFormation => FormationType.None;
 
         private Vector3 _coverDest;
         private bool _destSet;
+        private float _phaseTimer;
+        private int _shotsFired;
+        private int _repositionCount;
 
         public override bool CheckPreconditions(WorldState s)
             => !s.InCover;
@@ -34,6 +40,9 @@ namespace StealthHuntAI.Combat
         public override void OnEnter(StealthHuntAI unit, ThreatModel threat)
         {
             _destSet = false;
+            _phaseTimer = 0f;
+            _shotsFired = 0;
+            _repositionCount = 0;
         }
 
         public override bool Execute(StealthHuntAI unit, ThreatModel threat,
@@ -41,28 +50,111 @@ namespace StealthHuntAI.Combat
         {
             if (!_destSet)
             {
-                // Find cover via TacticalSystem
                 if (TacticalSystem.Instance != null)
                 {
                     var ctx = TacticalContext.Build(unit, threat, brain);
-                    var best = TacticalSystem.Instance.EvaluateSync(ctx);
-                    if (best?.CoverPoint != null)
+                    TacticalSystem.Instance.EvaluateSync(ctx);
+                    var all = TacticalSystem.Instance.LastCandidates;
+
+                    if (all != null)
                     {
-                        _coverDest = best.Position;
-                        _destSet = true;
+                        var squadUnits = HuntDirector.AllUnits;
+                        foreach (var spot in all)
+                        {
+                            if (spot.CoverPoint == null) continue;
+                            bool tooClose = false;
+                            for (int i = 0; i < squadUnits.Count; i++)
+                            {
+                                var u = squadUnits[i];
+                                if (u == null || u == unit || u.squadID != unit.squadID) continue;
+                                if (Vector3.Distance(spot.Position, u.transform.position) < 2.5f)
+                                { tooClose = true; break; }
+                            }
+                            if (!tooClose)
+                            {
+                                _coverDest = spot.Position;
+                                _destSet = true;
+                                break;
+                            }
+                        }
                     }
                 }
                 if (!_destSet)
                 {
-                    // No cover found -- advance toward best known position
-                    var best = GetBestKnownPosition(unit, threat);
-                    unit.CombatMoveTo(best);
+                    unit.CombatMoveTo(GetBestKnownPosition(unit, threat));
                     return false;
                 }
             }
 
+            _phaseTimer += dt;
+
+            // Move to cover
             bool arrived = MoveTo(unit, _coverDest);
-            return arrived;
+            if (!arrived) return false;
+
+            // In cover -- peek and shoot
+            unit.CombatStop();
+            Vector3 target = GetBestKnownPosition(unit, threat);
+            FaceToward(unit, target, 200f);
+
+            if (_phaseTimer >= 0.5f && threat.Confidence > 0.05f)
+            {
+                FireAt(unit, target);
+                _shotsFired++;
+                _phaseTimer = 0f;
+            }
+
+            if (_shotsFired >= 2)
+            {
+                _repositionCount++;
+                // After 3 repositions complete action -- let planner pick next
+                if (_repositionCount >= 3) return true;
+
+                _destSet = false;
+                _shotsFired = 0;
+                ResetMoveDest();
+                FindNewCover(unit, threat, brain);
+                if (!_destSet)
+                {
+                    _coverDest = GetBestKnownPosition(unit, threat);
+                    _destSet = true;
+                }
+            }
+
+            return false;
+        }
+
+        private void FindNewCover(StealthHuntAI unit, ThreatModel threat, TacticalBrain brain)
+        {
+            _destSet = false;
+            if (TacticalSystem.Instance == null) return;
+
+            var ctx = TacticalContext.Build(unit, threat, brain);
+            TacticalSystem.Instance.EvaluateSync(ctx);
+            var all = TacticalSystem.Instance.LastCandidates;
+            if (all == null) return;
+
+            var squadUnits = HuntDirector.AllUnits;
+            foreach (var spot in all)
+            {
+                if (spot.CoverPoint == null) continue;
+                if (Vector3.Distance(spot.Position, _coverDest) < 1.5f) continue;
+                bool tooClose = false;
+                for (int i = 0; i < squadUnits.Count; i++)
+                {
+                    var u = squadUnits[i];
+                    if (u == null || u == unit || u.squadID != unit.squadID) continue;
+                    if (Vector3.Distance(spot.Position, u.transform.position) < 2.5f)
+                    { tooClose = true; break; }
+                }
+                if (!tooClose)
+                {
+                    _coverDest = spot.Position;
+                    _destSet = true;
+                    ResetMoveDest();
+                    return;
+                }
+            }
         }
     }
 
@@ -75,10 +167,14 @@ namespace StealthHuntAI.Combat
     {
         public override string Name => "AdvanceAggressively";
         public override FormationType PreferredFormation => FormationType.Wedge;
+        public override bool IsInterruptible => true;
+        public override int Priority => 3;
 
         private float _suppressTimer;
         private float _pathCheckTimer;
         private bool _lastPathValid = true;
+        private List<Vector3> _waypoints = null;
+        private int _waypointIdx = 0;
 
         public override bool CheckPreconditions(WorldState s)
             => s.ThreatConfidence > 0.2f
@@ -94,10 +190,9 @@ namespace StealthHuntAI.Combat
 
         public override float GetCost(WorldState s, StealthHuntAI unit)
         {
-            float base_cost = 1f;
-            float confBonus = (1f - s.ThreatConfidence) * 1.5f;
-            float squadPenalty = s.SquadStrength < 0.5f ? 1f : 0f;
-            return base_cost + confBonus + squadPenalty;
+            float base_cost = 1f + (1f - s.ThreatConfidence) * 1.5f
+                            + (s.SquadStrength < 0.5f ? 1f : 0f);
+            return base_cost;
         }
 
         public override void OnEnter(StealthHuntAI unit, ThreatModel threat)
@@ -124,23 +219,40 @@ namespace StealthHuntAI.Combat
             float offset = (idx % 2 == 0 ? 1f : -1f) * (2f + idx * 0.5f);
             Vector3 spread = raw + perpDir * offset;
 
-            Vector3 dest = spread;
-            if (UnityEngine.AI.NavMesh.SamplePosition(spread, out var hit, 4f,
-                UnityEngine.AI.NavMesh.AllAreas))
-                dest = hit.position;
+            // Build safe waypoint route if not set
+            if (_waypoints == null || _waypointIdx >= _waypoints.Count)
+            {
+                _waypoints = TacticalPathfinder.BuildAdvanceRoute(unit, raw);
+                _waypointIdx = 0;
+            }
+            if (_waypoints != null && _waypoints.Count > 0)
+                TacticalPathfinder.FollowWaypoints(unit, _waypoints, ref _waypointIdx);
+            else
+            {
+                Vector3 fallbackDest = spread;
+                if (UnityEngine.AI.NavMesh.SamplePosition(spread, out var hit, 4f,
+                    UnityEngine.AI.NavMesh.AllAreas))
+                    fallbackDest = hit.position;
+                unit.CombatMoveTo(fallbackDest);
+            }
 
-            float dist = Vector3.Distance(unit.transform.position, dest);
+            float dist = Vector3.Distance(unit.transform.position, raw);
 
             // Check path validity every 0.5s
             _pathCheckTimer += dt;
             if (_pathCheckTimer >= 0.5f)
             {
                 _pathCheckTimer = 0f;
-                _lastPathValid = !IsPathBlocked(unit, dest);
+                var cur = _waypoints != null && _waypointIdx < _waypoints.Count
+                    ? _waypoints[_waypointIdx] : raw;
+                _lastPathValid = !IsPathBlocked(unit, cur);
             }
-            if (!_lastPathValid) return true; // replanner will find alternative
+            if (!_lastPathValid) { _waypoints = null; return true; }
 
-            unit.CombatMoveTo(dest);
+            // Abort on stale intel -- dont advance toward 20s old position
+            if (threat.Confidence < 0.1f || threat.TimeSinceSeen > 20f) return true;
+
+            // Movement handled above by TacticalPathfinder.FollowWaypoints
             unit.CombatRestoreRotation();
 
             // Fire immediately on LOS -- no delay when rounding a corner
@@ -161,13 +273,7 @@ namespace StealthHuntAI.Combat
                 }
             }
 
-            // Signal buddy when arrived -- triggers role swap
-            if (dist < 6f || threat.HasLOS)
-            {
-                BuddySystem.GetOrCreate(unit.squadID).SignalArrived(unit);
-                return true;
-            }
-            return false;
+            return dist < 6f || threat.HasLOS;
         }
     }
 
@@ -180,12 +286,16 @@ namespace StealthHuntAI.Combat
     {
         public override string Name => "Flank";
         public override FormationType PreferredFormation => FormationType.File;
+        public override bool IsInterruptible => true;
+        public override int Priority => 4;
 
         private Vector3 _flankDest;
         private bool _destSet;
         private float _suppressTimer;
         private float _pathCheckTimer;
         private bool _pathBlocked;
+        private List<Vector3> _waypoints = null;
+        private int _waypointIdx = 0;
 
         public override bool CheckPreconditions(WorldState s)
             => s.ThreatConfidence > 0.25f
@@ -200,50 +310,67 @@ namespace StealthHuntAI.Combat
         }
 
         public override float GetCost(WorldState s, StealthHuntAI unit)
-            => s.SquadmateSuppressing ? 0.8f : 2.0f; // cheap when teammate suppresses
+        {
+            float base_cost = s.SquadmateSuppressing ? 0.8f : 2.0f;
+            return base_cost;
+        }
 
         public override void OnEnter(StealthHuntAI unit, ThreatModel threat)
         {
             _destSet = false;
             _suppressTimer = 0f;
+            _waypointIdx = 0;
+
+            Vector3 threatPos = GetBestKnownPosition(unit, threat);
+            _waypoints = TacticalPathfinder.BuildFlankRoute(unit, threatPos);
+            if (_waypoints != null && _waypoints.Count > 0)
+            {
+                _flankDest = _waypoints[_waypoints.Count - 1];
+                _destSet = true;
+            }
+            else
+            {
+                var pos = TacticalBrain.GetOrCreate(unit.squadID)?.GetFlankPosition(unit);
+                if (pos.HasValue) { _flankDest = pos.Value; _destSet = true; }
+            }
         }
 
         public override bool Execute(StealthHuntAI unit, ThreatModel threat,
                                       TacticalBrain brain, float dt)
         {
-            if (!_destSet)
-            {
-                var pos = brain.GetFlankPosition(unit);
-                if (!pos.HasValue) return true;
-                _flankDest = pos.Value;
-                _destSet = true;
-            }
+            if (!_destSet) return true;
 
-            // Re-verify path each frame -- abort if blocked
-            if (IsPathBlocked(unit, _flankDest))
-            {
-                _destSet = false; // force recalculation
-                return true;     // abort this action
-            }
+            // Abort flank if intel too stale or position too old
+            if (threat.Confidence < 0.12f) return true;
+            if (threat.TimeSinceSeen > 15f) return true; // 15s old -- give up
 
+            bool arrived = TacticalPathfinder.FollowWaypoints(
+                unit, _waypoints, ref _waypointIdx);
             float dist = Vector3.Distance(unit.transform.position, _flankDest);
-            unit.CombatMoveTo(_flankDest);
             unit.CombatRestoreRotation();
 
-            _suppressTimer += dt;
             Vector3 fireTarget = GetBestKnownPosition(unit, threat);
+
             if (threat.HasLOS)
             {
+                // Got LOS while flanking -- stop and shoot immediately
+                unit.CombatStop();
+                unit.CombatFaceToward(fireTarget, 400f);
                 FireAt(unit, fireTarget);
                 _suppressTimer = 0f;
             }
-            else if (_suppressTimer > 1.8f)
+            else
             {
-                FireAt(unit, fireTarget);
-                _suppressTimer = 0f;
+                // No LOS -- fire suppression every 0.8s while moving
+                _suppressTimer += dt;
+                if (_suppressTimer > 0.8f)
+                {
+                    FireAt(unit, fireTarget);
+                    _suppressTimer = 0f;
+                }
             }
 
-            return dist < 2f;
+            return arrived || dist < 2f;
         }
     }
 
@@ -251,12 +378,25 @@ namespace StealthHuntAI.Combat
     // SuppressAction
     // =========================================================================
 
-    /// <summary>Fire suppression to pin threat and cover advancing teammate.</summary>
+    /// <summary>
+    /// Fire suppression in coordinated bursts to cover buddy advance.
+    /// Uses three-phase timing: Firing -> Pause -> Firing -> Complete
+    /// Not interruptible mid-burst so buddy gets full cover window.
+    /// </summary>
     public class SuppressAction : GoapAction
     {
         public override string Name => "Suppress";
         public override FormationType PreferredFormation => FormationType.Overwatch;
+        public override bool IsInterruptible => false; // complete burst
+        public override int Priority => 5;
 
+        private enum SuppressPhase { Firing, Pausing, Done }
+        private SuppressPhase _phase;
+        private float _phaseTimer;
+        private int _burstCount;
+        private const float BurstDuration = 0.8f;
+        private const float PauseDuration = 0.4f;
+        private const int BurstsRequired = 3;
         private float _duration;
         private const float SuppressDuration = 2.5f;
 
@@ -271,7 +411,7 @@ namespace StealthHuntAI.Combat
         }
 
         public override float GetCost(WorldState s, StealthHuntAI unit)
-            => 0.5f; // very cheap -- supports teammate
+            => s.SquadmateSuppressing ? 1.5f : 0.5f;
 
         public override void OnEnter(StealthHuntAI unit, ThreatModel threat)
             => _duration = 0f;
@@ -306,6 +446,8 @@ namespace StealthHuntAI.Combat
     {
         public override string Name => "HoldChokepoint";
         public override FormationType PreferredFormation => FormationType.Line;
+        public override bool IsInterruptible => false;
+        public override int Priority => 6;
 
         private Vector3 _holdPos;
         private bool _atPosition;
@@ -376,9 +518,13 @@ namespace StealthHuntAI.Combat
     {
         public override string Name => "Withdraw";
         public override FormationType PreferredFormation => FormationType.File;
+        public override bool IsInterruptible => true;
+        public override int Priority => 2;
 
         private Vector3 _withdrawDest;
         private bool _destSet;
+        private List<Vector3> _waypoints;
+        private int _waypointIdx;
 
         public override bool CheckPreconditions(WorldState s)
             => s.SquadStrength < 0.15f || s.Health < 0.15f;
@@ -395,11 +541,14 @@ namespace StealthHuntAI.Combat
         public override void OnEnter(StealthHuntAI unit, ThreatModel threat)
         {
             _destSet = false;
-            // Find withdraw point -- away from threat, preferably behind cover
-            if (threat.HasIntel)
+            _waypointIdx = 0;
+            Vector3 threatPos = GetBestKnownPosition(unit, threat);
+            _waypoints = TacticalPathfinder.BuildWithdrawRoute(unit, threatPos);
+
+            // Fallback -- direct withdraw
+            if ((_waypoints == null || _waypoints.Count == 0) && threat.HasIntel)
             {
-                Vector3 awayDir = (unit.transform.position
-                    - threat.EstimatedPosition).normalized;
+                Vector3 awayDir = (unit.transform.position - threatPos).normalized;
                 Vector3 candidate = unit.transform.position + awayDir * 15f;
                 if (UnityEngine.AI.NavMesh.SamplePosition(candidate,
                     out var hit, 5f, UnityEngine.AI.NavMesh.AllAreas))
@@ -413,6 +562,11 @@ namespace StealthHuntAI.Combat
         public override bool Execute(StealthHuntAI unit, ThreatModel threat,
                                       TacticalBrain brain, float dt)
         {
+            // Follow safe waypoint route
+            if (_waypoints != null && _waypoints.Count > 0)
+                return TacticalPathfinder.FollowWaypoints(unit, _waypoints, ref _waypointIdx);
+
+            // Fallback -- direct move
             if (!_destSet) return true;
             return MoveTo(unit, _withdrawDest);
         }
@@ -430,6 +584,8 @@ namespace StealthHuntAI.Combat
     {
         public override string Name => "Search";
         public override FormationType PreferredFormation => FormationType.Wedge;
+        public override bool IsInterruptible => true;
+        public override int Priority => 1;
 
         private float _timer;
 

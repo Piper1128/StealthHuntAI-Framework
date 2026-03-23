@@ -31,7 +31,32 @@ namespace StealthHuntAI.Demo
         public float adsAccuracyBonus = 0.5f;
 
         [Header("Sound")]
-        [Range(10f, 60f)] public float gunshotRadius = 30f;
+        [Tooltip("Radius guards can hear unsuppressed gunshot.")]
+        [Range(5f, 80f)] public float gunshotRadius = 35f;
+
+        [Tooltip("Sound intensity 0-1. Higher = guards react faster.")]
+        [Range(0f, 1f)] public float gunshotIntensity = 0.9f;
+
+        [Tooltip("Enable suppressor. Reduces radius and intensity significantly.")]
+        public bool isSuppressed = false;
+
+        [Tooltip("Radius with suppressor.")]
+        [Range(1f, 20f)] public float suppressedRadius = 8f;
+
+        [Tooltip("Intensity with suppressor.")]
+        [Range(0f, 0.5f)] public float suppressedIntensity = 0.15f;
+
+        [Tooltip("Melee kill sound radius -- quiet but not silent.")]
+        [Range(0f, 10f)] public float meleeKillRadius = 2.5f;
+
+        [Tooltip("Melee kill sound intensity.")]
+        [Range(0f, 0.5f)] public float meleeKillIntensity = 0.2f;
+
+        [Tooltip("Takedown / stealth kill -- near silent.")]
+        [Range(0f, 5f)] public float stealthKillRadius = 1f;
+
+        [Tooltip("Stealth kill intensity.")]
+        [Range(0f, 0.3f)] public float stealthKillIntensity = 0.05f;
 
         [Header("Spread")]
         public float baseSpread = 0.02f;
@@ -177,8 +202,10 @@ namespace StealthHuntAI.Demo
             if (muzzle != null)
                 OnMuzzleFlash(muzzle.position, muzzle.forward);
 
-            // Broadcast gunshot sound -- guards within range become suspicious/hostile
-            HuntDirector.BroadcastSound(transform.position, 0.9f, gunshotRadius);
+            // Broadcast gunshot -- suppressed weapons are much quieter
+            float shotRadius = isSuppressed ? suppressedRadius : gunshotRadius;
+            float shotIntensity = isSuppressed ? suppressedIntensity : gunshotIntensity;
+            HuntDirector.BroadcastSound(transform.position, shotIntensity, shotRadius);
 
             bool _hit = Physics.Raycast(origin, dir, out RaycastHit hit, range, shootLayers);
             if (muzzle != null)
@@ -277,7 +304,16 @@ namespace StealthHuntAI.Demo
                 hitPoint = hit.point,
                 sourceTag = "Player"
             };
-            hit.collider.GetComponentInParent<GuardHealth>()?.TakeDamage(info);
+            var gh = hit.collider.GetComponentInParent<GuardHealth>();
+            if (gh != null)
+            {
+                gh.TakeDamage(info);
+                // Melee kill is quieter than gunshot but not silent
+                bool isKill = gh.CurrentHealth <= 0f;
+                float r = isKill ? stealthKillRadius : meleeKillRadius;
+                float v = isKill ? stealthKillIntensity : meleeKillIntensity;
+                HuntDirector.BroadcastSound(transform.position, v, r);
+            }
         }
 
         private void UpdateMelee()

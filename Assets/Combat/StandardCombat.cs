@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using StealthHuntAI.Combat.CQB;
 using UnityEngine.AI;
 
 namespace StealthHuntAI.Combat
@@ -26,7 +27,8 @@ namespace StealthHuntAI.Combat
         public CoverWeights weights = new CoverWeights();
 
         [Header("Performance")]
-        [Range(0.5f, 8f)] public float ReplanInterval = 1.5f;
+        [Range(0.1f, 4f)] public float ReplanInterval = 0.6f;
+        private float _replanOffset; // stagger offset so guards dont all replan same frame
         [Range(5f, 40f)] public float CoverSearchRange = 25f;
 
         [Header("Animation")]
@@ -38,6 +40,7 @@ namespace StealthHuntAI.Combat
         public bool WantsControl { get; private set; }
         public string CurrentStateName => _currentAction?.Name ?? "Idle";
         public string CurrentPlanName => _plan != null ? _plan.ToString() : "none";
+        public string CurrentStrategy => _brain?.Strategy.ToString() ?? "none";
 
         // Goal enum exposed for WorldState.Build
         public enum Goal { Idle, AdvanceTo, HoldAndFire, Suppress, Flank, Search }
@@ -53,8 +56,7 @@ namespace StealthHuntAI.Combat
             _ai = ai;
             _brain = TacticalBrain.GetOrCreate(ai.squadID);
             _brain.RegisterMember(ai);
-            _buddy = BuddySystem.GetOrCreate(ai.squadID);
-            RebuildBuddyPairs(ai);
+            _events = CombatEventBus.Get(ai);
             _threat = new ThreatModel();
             _planner = new GoapPlanner();
             BuildActions();
@@ -89,10 +91,34 @@ namespace StealthHuntAI.Combat
             _replanTimer += Time.deltaTime;
 
             UpdateThreat();
-            _buddy?.Update(Time.deltaTime);
+            ProcessEvents();
+            CheckStuck();
+
+            // Update squad strategy
+            if (_ai.squadID == GetSquadLeaderID())
+            {
+                var ws = WorldState.Build(_ai, _threat, _brain);
+                _brain.Strategy.Update(Time.deltaTime, ws, _brain);
+            }
+
+            // Evaluate CQB entry when near a door and threat inside
+            if (!_brain.CQB.IsActive && _threat.HasIntel)
+            {
+                var members = new System.Collections.Generic.List<StealthHuntAI>();
+                var allUnits = HuntDirector.AllUnits;
+                for (int i = 0; i < allUnits.Count; i++)
+                    if (allUnits[i] != null && allUnits[i].squadID == _ai.squadID)
+                        members.Add(allUnits[i]);
+                _brain.CQB.EvaluateEntry(
+                    _ai.transform.position,
+                    _threat.EstimatedPosition,
+                    _threat.Confidence,
+                    members);
+            }
 
             // Replan periodically or when plan is done
-            if (_replanTimer >= ReplanInterval || _plan == null || _plan.IsComplete)
+            if (_replanTimer >= ReplanInterval + _replanOffset
+             || _plan == null || _plan.IsComplete)
                 RequestReplan();
 
             ExecuteCurrentAction();
@@ -113,7 +139,9 @@ namespace StealthHuntAI.Combat
 
         private StealthHuntAI _ai;
         private TacticalBrain _brain;
-        private BuddySystem _buddy;
+        private CombatEventBus _events;
+        private float _stuckTimer;
+        private Vector3 _lastStuckPos;
         private ThreatModel _threat;
         private GoapPlanner _planner;
         private GoapPlanner.Plan _plan;
@@ -159,13 +187,20 @@ namespace StealthHuntAI.Combat
             _actions.Add(new FlankAction());
             _actions.Add(new SuppressAction());
             _actions.Add(new HoldChokepointAction());
+            _actions.Add(new HighGroundAction());
             _actions.Add(new WithdrawAction());
             _actions.Add(new SearchAction());
+            // CQB actions
+            _actions.Add(new StackAction());
+            _actions.Add(new BreachAction());
+            _actions.Add(new ClearCornerAction());
+            _actions.Add(new HoldFatalFunnelAction());
         }
 
         private void RequestReplan()
         {
             _replanTimer = 0f;
+            _replanOffset = 0f; // only stagger first replan
 
             WorldState current = WorldState.Build(_ai, _threat, _brain);
             WorldState goal = ChooseGoal(current);
@@ -262,7 +297,11 @@ namespace StealthHuntAI.Combat
             }
 
             // Force replan on significant world state changes
-            bool noIntel = !_threat.HasIntel && !(_currentAction is SearchAction);
+            // Yield threshold -- keep fighting until confidence is very low
+            // Yield to Core when intel is stale -- 0.15 gives clear margin
+            bool noIntel = _threat.Confidence < 0.15f
+                            && !(_currentAction is SearchAction)
+                            && !(_currentAction is TakeCoverAction);
             bool gotLOS = _threat.HasLOS && _currentAction is SearchAction;
             bool shouldWithdraw = _currentAction is not WithdrawAction
                 && (WorldState.Build(_ai, _threat, _brain).SquadStrength < 0.25f
@@ -296,6 +335,65 @@ namespace StealthHuntAI.Combat
         /// Core runs TickLostTarget -- full ReachabilitySearch with Markov prediction.
         /// Combat regains control when Core re-enters Hostile state.
         /// </summary>
+        /// <summary>
+        /// Force an action immediately -- interrupts current plan.
+        /// Used by GuardHealth to force cover seeking on hit.
+        /// </summary>
+        public void ForceAction(GoapAction action)
+        {
+            _currentAction?.OnExit(_ai);
+            _plan = null;
+            _replanTimer = 0f;
+            _currentAction = action;
+            _currentAction.OnEnter(_ai, _threat);
+        }
+
+        private void ProcessEvents()
+        {
+            if (_events == null || !_events.HasEvents) return;
+
+            var evt = _events.ConsumeHighestPriority();
+            if (evt == null) return;
+
+            switch (evt.Value.Type)
+            {
+                case CombatEventType.DamageTaken:
+                case CombatEventType.Ambushed:
+                    // Always interrupt -- being hit overrides everything
+                    ForceAction(new TakeCoverAction());
+                    return;
+
+                case CombatEventType.BuddyDown:
+                    if (_currentAction == null || _currentAction.IsInterruptible)
+                        ForceAction(new SuppressAction());
+                    return;
+
+
+                case CombatEventType.ThreatFlank:
+                    // Reorient -- invalidate plan so we reassess
+                    _threat.ReceiveIntel(evt.Value.Position,
+                        Vector3.zero, 0.8f);
+                    _currentAction?.OnExit(_ai);
+                    _currentAction = null;
+                    RequestReplan();
+                    break;
+
+                case CombatEventType.BuddyNeedsHelp:
+                    ForceAction(new SuppressAction());
+                    break;
+
+                case CombatEventType.ThreatFound:
+                    // Regained LOS -- interrupt search and engage
+                    if (_currentAction is SearchAction)
+                    {
+                        _currentAction.OnExit(_ai);
+                        _currentAction = null;
+                        RequestReplan();
+                    }
+                    break;
+            }
+        }
+
         private void YieldToCore()
         {
             _currentAction?.OnExit(_ai);
@@ -305,14 +403,55 @@ namespace StealthHuntAI.Combat
             // when Core transitions back to Hostile after finding player
         }
 
-        private void RebuildBuddyPairs(StealthHuntAI ai)
+        private void CheckStuck()
         {
-            var members = new System.Collections.Generic.List<StealthHuntAI>();
+            var agent = _ai?.GetComponent<UnityEngine.AI.NavMeshAgent>();
+            if (agent == null || agent.isStopped || !agent.hasPath) return;
+
+            // Detect partial/invalid path -- agent has path but cant complete it
+            if (agent.pathStatus == UnityEngine.AI.NavMeshPathStatus.PathPartial
+             || agent.pathStatus == UnityEngine.AI.NavMeshPathStatus.PathInvalid)
+            {
+                _currentAction?.OnExit(_ai);
+                _currentAction = null;
+                _plan = null;
+                return;
+            }
+
+            // Detect velocity stall -- agent wants to move but isnt
+            if (agent.desiredVelocity.magnitude < 0.1f) return;
+
+            float moved = Vector3.Distance(_ai.transform.position, _lastStuckPos);
+            if (moved > 0.5f)
+            {
+                _stuckTimer = 0f;
+                _lastStuckPos = _ai.transform.position;
+                return;
+            }
+
+            _stuckTimer += Time.deltaTime;
+            if (_stuckTimer > 2f)
+            {
+                // Stuck -- invalidate action and let planner choose new destination
+                // Do NOT warp -- warping to random position causes wall clipping
+                _currentAction?.OnExit(_ai);
+                _currentAction = null;
+                _plan = null;
+                _stuckTimer = 0f;
+                _lastStuckPos = _ai.transform.position;
+
+                // Stop agent cleanly
+                agent.ResetPath();
+            }
+        }
+
+        private int GetSquadLeaderID()
+        {
             var units = HuntDirector.AllUnits;
             for (int i = 0; i < units.Count; i++)
-                if (units[i] != null && units[i].squadID == ai.squadID)
-                    members.Add(units[i]);
-            _buddy.RebuildPairs(members);
+                if (units[i] != null && units[i].squadID == _ai.squadID)
+                    return units[i].GetInstanceID();
+            return -1;
         }
 
         private void ReleaseCover()

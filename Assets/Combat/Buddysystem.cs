@@ -30,7 +30,7 @@ namespace StealthHuntAI.Combat
             public bool SuppressorReady { get; private set; }
             public float SwapCooldown { get; private set; }
 
-            private const float MinSwapInterval = 2.5f;
+            private const float MinSwapInterval = 1.2f;
 
             public void SignalArrived(StealthHuntAI unit)
             {
@@ -39,13 +39,22 @@ namespace StealthHuntAI.Combat
                 if (unit == Suppressor) SuppressorReady = true;
             }
 
+            private float _suppressorTimer;
+            private const float MaxSuppressorTime = 4f;
+
             public void Update(float dt)
             {
                 SwapCooldown = Mathf.Max(0f, SwapCooldown - dt);
 
-                // Swap roles when Tracker signals arrived
-                if (TrackerArrived && SwapCooldown <= 0f)
+                if (Suppressor != null) _suppressorTimer += dt;
+
+                // Swap when Tracker signals OR Suppressor held too long
+                bool forcedSwap = _suppressorTimer > MaxSuppressorTime;
+                if ((TrackerArrived || forcedSwap) && SwapCooldown <= 0f)
+                {
                     SwapRoles();
+                    _suppressorTimer = 0f;
+                }
             }
 
             private void SwapRoles()
@@ -68,7 +77,8 @@ namespace StealthHuntAI.Combat
             public StealthHuntAI GetBuddy(StealthHuntAI unit)
                 => unit == Tracker ? Suppressor : Tracker;
 
-            public bool IsValid => Tracker != null && Suppressor != null;
+            public bool IsValid => Tracker != null && Suppressor != null
+                                && !Tracker.IsDead && !Suppressor.IsDead;
         }
 
         // ---------- Registry -------------------------------------------------
@@ -132,7 +142,10 @@ namespace StealthHuntAI.Combat
         public BuddyRole GetRole(StealthHuntAI unit)
         {
             var pair = GetPair(unit);
-            if (pair == null) return BuddyRole.Tracker; // singles are always Tracker
+            if (pair == null) return BuddyRole.Tracker;
+            // If buddy is null (died) -- act as Tracker regardless of role
+            var buddy = pair.GetBuddy(unit);
+            if (buddy == null) return BuddyRole.Tracker;
             return pair.GetRole(unit);
         }
 

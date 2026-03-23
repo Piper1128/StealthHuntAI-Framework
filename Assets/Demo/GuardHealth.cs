@@ -102,33 +102,103 @@ namespace StealthHuntAI.Demo
             float dmg = CalcDamage(info);
             CurrentHealth = Mathf.Max(0f, CurrentHealth - dmg);
 
-            // Hit reaction anim
-            _ai?.PlayAnimState("HitReaction");
-
-            // Become hostile immediately when hit
-            if (_ai != null && !IsDead)
+            // Strong hit reaction -- suppression, stagger, intel
+            if (!IsDead)
             {
-                _ai.ForceHostile();
-                AddSuppression(0.2f);
+                // Heavy suppression on hit -- guard flinches and loses accuracy
+                AddSuppression(0.5f);
 
-                // Broadcast pain sound -- nearby guards hear it and become suspicious
-                HuntDirector.BroadcastSound(transform.position, 0.7f, 20f);
+                // Stagger -- briefly stop movement
+                StartCoroutine(StaggerRoutine(info));
 
-                // Share shooter position via squad blackboard
-                if (info.direction != Vector3.zero)
+                // Hit reaction animation
+                _ai?.PlayAnimState("HitReaction");
+
+                // Become hostile
+                _ai?.ForceHostile();
+
+                // Raise combat event -- triggers immediate cover seek
+                CombatEventBus.Get(_ai).Raise(
+                    CombatEventType.DamageTaken, _ai,
+                    transform.position, info.direction,
+                    info.damage / maxHealth);
+
+                // Broadcast pain -- nearby guards react
+                HuntDirector.BroadcastSound(transform.position, 0.8f, 25f);
+
+                // Estimate shooter from bullet direction
+                // Use raycast to find actual range -- much more accurate
+                if (info.direction != Vector3.zero && _ai != null)
                 {
-                    // Estimate shooter position from bullet direction
-                    Vector3 shooterDir = -info.direction.normalized;
-                    Vector3 estimatedShooterPos = transform.position + shooterDir * 15f;
+                    Vector3 shootDir = -info.direction.normalized;
+                    Vector3 shooterPos;
+                    float confidence;
+
+                    // Raycast backwards along bullet path to find cover or wall
+                    if (Physics.Raycast(transform.position + Vector3.up,
+                        shootDir, out RaycastHit sourceHit, 60f))
+                    {
+                        // Hit something -- shooter is near there
+                        shooterPos = sourceHit.point;
+                        confidence = 0.5f; // moderate -- shooter may have moved
+                    }
+                    else
+                    {
+                        // No hit -- estimate at max range
+                        shooterPos = transform.position + shootDir * 40f;
+                        confidence = 0.25f; // low -- just a direction
+                    }
+
                     var board = SquadBlackboard.Get(_ai.squadID);
-                    if (board != null)
-                        board.ShareIntel(estimatedShooterPos, 0.6f);
+                    board?.ShareIntel(shooterPos, confidence);
                 }
             }
 
             onHit?.Invoke(info);
 
             if (CurrentHealth <= 0f) Die();
+        }
+
+        private System.Collections.IEnumerator StaggerRoutine(DamageInfo info)
+        {
+            var agent = GetComponent<UnityEngine.AI.NavMeshAgent>();
+            var sc = GetComponent<StandardCombat>();
+
+            // Stop movement briefly
+            if (agent != null) agent.isStopped = true;
+
+            // Push in hit direction (visual knockback via transform)
+            if (info.direction != Vector3.zero)
+            {
+                Vector3 push = info.direction.normalized * 0.3f;
+                push.y = 0f;
+                float pushTime = 0f;
+                while (pushTime < 0.12f)
+                {
+                    transform.position += push * Time.deltaTime * 8f;
+                    pushTime += Time.deltaTime;
+                    yield return null;
+                }
+            }
+
+            // Stagger duration scales with damage
+            float staggerDur = Mathf.Clamp(info.damage / 30f, 0.15f, 0.4f);
+            yield return new UnityEngine.WaitForSeconds(staggerDur);
+
+            // Resume movement
+            if (agent != null && !IsDead) agent.isStopped = false;
+
+            // Force seek cover immediately after stagger
+            if (!IsDead) ForceSeekCover();
+        }
+
+        private void ForceSeekCover()
+        {
+            var sc = GetComponent<StandardCombat>();
+            if (sc == null || !sc.WantsControl) return;
+
+            // Interrupt current action and force TakeCover
+            sc.ForceAction(new TakeCoverAction());
         }
 
         public void AddSuppression(float amount)
@@ -154,6 +224,12 @@ namespace StealthHuntAI.Demo
         private void Die()
         {
             IsDead = true;
+            _ai?.SetDead();
+            // Alert squad that a buddy is down
+            if (_ai != null)
+                CombatEventBus.RaiseSquad(_ai.squadID,
+                    CombatEventType.BuddyDown, _ai,
+                    transform.position, 1f);
             // Remove from HuntDirector unit list so dead guards dont count
             HuntDirector.UnregisterUnit(_ai);
             _ai?.Die();

@@ -147,14 +147,13 @@ namespace StealthHuntAI.Demo
                     : transform.position + transform.forward * 10f);
             Vector3 toTarget = targetPos - origin;
 
-            // Line of sight check -- don't shoot through walls
-            if (Physics.Raycast(origin, toTarget.normalized, toTarget.magnitude, shootLayers))
+            // Line of sight check -- only shoot if first hit is the player
+            if (Physics.Raycast(origin, toTarget.normalized,
+                out RaycastHit losHit, toTarget.magnitude, shootLayers))
             {
-                // Something is blocking -- check if it's the player
-                if (!Physics.Raycast(origin, toTarget.normalized,
-                    out RaycastHit losHit, toTarget.magnitude, shootLayers)
-                    || losHit.collider.GetComponentInParent<PlayerHealth>() == null)
-                    return; // blocked by wall
+                // First hit is NOT player -- wall or other object blocking
+                if (losHit.collider.GetComponentInParent<PlayerHealth>() == null)
+                    return;
             }
 
             // Apply spread

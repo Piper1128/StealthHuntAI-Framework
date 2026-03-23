@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using StealthHuntAI.Combat.CQB;
 using UnityEngine.AI;
 
 namespace StealthHuntAI.Combat
@@ -15,6 +16,12 @@ namespace StealthHuntAI.Combat
 
         /// <summary>Squad-level threat model -- best available intel from any squad member.</summary>
         public ThreatModel SharedThreat { get; } = new ThreatModel();
+
+        /// <summary>Current squad strategy and cost modifiers.</summary>
+        public SquadStrategySelector Strategy { get; } = new SquadStrategySelector();
+
+        /// <summary>CQB entry coordinator.</summary>
+        public CQBController CQB { get; } = new CQBController();
 
         // ---------- Bounding overwatch ---------------------------------------
 
