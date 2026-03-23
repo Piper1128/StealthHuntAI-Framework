@@ -6,6 +6,21 @@ A Unity 6 stealth and combat AI system built for the Asset Store. Guards perceiv
 
 ---
 
+![Squad heatmap with hostile guards advancing](docs/squad-hostile.png)
+
+*Squad tab showing hostile guards advancing — heatmap overlay visible in scene view*
+
+| | |
+|---|---|
+| ![Tactical scorer breakdown](docs/scorers.png) | ![Threat model and flanking](docs/threat-model.png) |
+| *10 live scorers with tunable weights* | *Threat model — confidence, estimated position, time since seen* |
+
+![Squad overview with 19 guards](docs/squad-overview.png)
+
+*Squad tab showing all 19 guards — one suspicious, rest passive*
+
+---
+
 ## What it does
 
 Guards react to sight, sound and the environment through a layered perception system. When they find you, they switch from stealth pursuit to coordinated combat — flanking, suppressing, breaching rooms and sharing intel across squads.
