@@ -162,6 +162,26 @@ namespace StealthHuntAI.Combat.CQB
         /// <summary>
         /// Find all entry points leading to a specific room.
         /// </summary>
+        /// <summary>
+        /// Find all entry points within maxDist of a world position.
+        /// Used by SquadTactician to find alternate entry points for rear security.
+        /// </summary>
+        public static List<EntryPoint> FindAllNear(Vector3 pos, float maxDist)
+        {
+            var result = new List<EntryPoint>();
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                if (_entries[i] == null) continue;
+                if (Vector3.Distance(_entries[i].transform.position, pos) <= maxDist)
+                    result.Add(_entries[i]);
+            }
+            // Sort closest first
+            result.Sort((a, b) =>
+                Vector3.Distance(a.transform.position, pos)
+                .CompareTo(Vector3.Distance(b.transform.position, pos)));
+            return result;
+        }
+
         public static List<EntryPoint> FindByRoom(string roomID)
         {
             var result = new List<EntryPoint>();

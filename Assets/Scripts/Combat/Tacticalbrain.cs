@@ -20,6 +20,9 @@ namespace StealthHuntAI.Combat
         public SquadStrategySelector Strategy => Coordinator.Strategy;
         public CQBController CQB { get; } = new CQBController();
 
+        /// <summary>Central role controller -- runs on squad leader.</summary>
+        public SquadTactician Tactician { get; } = new SquadTactician();
+
         // ---------- Backward-compat passthroughs ----------------------------
 
         /// <summary>Backward compat: returns Intel.Threat.</summary>

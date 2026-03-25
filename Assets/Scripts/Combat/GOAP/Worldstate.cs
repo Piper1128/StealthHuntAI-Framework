@@ -80,6 +80,10 @@ namespace StealthHuntAI.Combat
         public static WorldState Build(StealthHuntAI unit, ThreatModel threat,
                                         TacticalBrain brain)
         {
+            // Always use shared threat -- ignore passed parameter
+            // if brain has one (ensures squad-wide consistency)
+            if (brain?.Intel?.Threat != null) threat = brain.Intel.Threat;
+            if (threat == null) threat = new ThreatModel();
             var units = HuntDirector.AllUnits;
             int alive = 0;
             int total = 0;
