@@ -71,6 +71,8 @@ namespace StealthHuntAI.Combat
             // Always evaluate immediately on first tick
             if (confChanged || guardDied || timerExpired || _lastAliveCount < 0)
             {
+                // Clear assigned roles on death so dead guard's role isnt reused
+                if (guardDied) _assigned.Clear();
                 Evaluate(brain, allUnits, squadID);
                 _lastConfidence = intel.Confidence;
                 _lastAliveCount = aliveCount;
@@ -160,12 +162,13 @@ namespace StealthHuntAI.Combat
         private void AssignSearch(List<StealthHuntAI> members, SquadIntel intel)
         {
             _searchSectors.Clear();
-            float sectorSize = 360f / Mathf.Max(1, members.Count);
-            // Randomize starting angle so search pattern is unpredictable
+            int count = Mathf.Max(1, members.Count);
+            float sectorSize = 360f / count;
             float startAngle = UnityEngine.Random.Range(0f, 360f);
 
             for (int i = 0; i < members.Count; i++)
             {
+                if (members[i] == null || members[i].IsDead) continue;
                 float angle = startAngle + sectorSize * i;
                 _searchSectors[members[i].GetInstanceID()] = angle;
                 Assign(members[i], CombatRole.Search);

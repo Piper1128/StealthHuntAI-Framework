@@ -67,26 +67,26 @@ namespace StealthHuntAI.Combat
             _brain = TacticalBrain.GetOrCreate(ai.squadID);
             _brain.RegisterMember(ai);
             _events = CombatEventBus.Get(ai);
+            _threat = new ThreatModel();
+            _threat.OnEnterCombat();
 
-            // Seed shared threat from blackboard
-            var sharedThreat = _brain.Intel.Threat;
             var board = SquadBlackboard.Get(ai.squadID);
             if (board != null && board.SharedConfidence > 0.05f)
-                sharedThreat.ReceiveIntel(board.SharedLastKnown, Vector3.zero,
-                                          board.SharedConfidence);
+                _threat.ReceiveIntel(board.SharedLastKnown, Vector3.zero,
+                                     board.SharedConfidence);
 
             var target = ai.GetTarget();
             if (target != null && ai.Sensor.CanSeeTarget)
-                sharedThreat.UpdateWithSight(target.Position, target.Velocity);
+                _threat.UpdateWithSight(target.Position, target.Velocity);
 
-            // Fallback seed so EstimatedPosition is never zero
-            if (sharedThreat.EstimatedPosition == Vector3.zero)
-                sharedThreat.ReceiveIntel(
+            // Guard against zero EstimatedPosition -- use own position as fallback
+            // so routing destinations are never world origin
+            if (_threat.EstimatedPosition == Vector3.zero)
+                _threat.ReceiveIntel(
                     ai.transform.position + ai.transform.forward * 10f,
                     Vector3.zero, 0.1f);
 
-            // Tactician will assign role on first Tick -- set Search as safe default
-            SetRole(CombatRole.Search);
+            SelectRole();
         }
 
         public void OnExitCombat(StealthHuntAI ai)
@@ -119,11 +119,11 @@ namespace StealthHuntAI.Combat
 
             if (IsSquadLeader())
             {
-                // SquadTactician drives all decisions centrally
-                _brain.Tactician.Tick(Time.deltaTime, _brain,
-                    HuntDirector.AllUnits, _ai.squadID);
+                var ws = WorldState.Build(_ai, _threat, _brain);
+                _brain.Strategy.Update(Time.deltaTime, ws, _brain);
                 _brain.TickCommittedGoal();
                 _brain.CQB.Tick(Time.deltaTime);
+                TickCQBEvaluation();
             }
             else
             {
@@ -140,29 +140,22 @@ namespace StealthHuntAI.Combat
 
             TickCombatLoop();
 
-            bool stale = _threat == null || _threat.Confidence < 0.1f || _threat.TimeSinceSeen > 30f;
+            // Only yield if truly lost -- guards stay active during search
+            bool stale = _threat == null
+                      || (_threat.Confidence <= 0f && _threat.TimeSinceSeen > 60f);
             if (stale) { YieldToCore(); return; }
 
             _roleTimer += Time.deltaTime;
-            if (_role == CombatRole.Idle)
+            // Apply Tactician assignment -- only switch if role changed
+            if (_brain != null)
             {
-                SelectRole();
-            }
-            else if (_role == CombatRole.Search)
-            {
-                // Search picks new dest when timer expires -- dont full ForceRole
-                if (_roleTimer >= _roleMaxTime)
-                {
-                    _roleDestSet = false; // pick new search sector
-                    _roleTimer = 0f;
-                }
-            }
-            else
-            {
-                // Apply Tactician assignment -- only change if actually different
-                var assigned = _brain?.Tactician?.GetAssignedRole(_ai) ?? _role;
+                var assigned = _brain.Tactician.GetAssignedRole(_ai);
                 if (assigned != _role) ForceRole(assigned);
             }
+            // Search/Idle need periodic dest reset
+            if ((_role == CombatRole.Search || _role == CombatRole.Idle)
+             && _roleTimer >= _roleMaxTime)
+            { _roleDestSet = false; _roleTimer = 0f; }
 
             TickRole();
 
@@ -173,7 +166,6 @@ namespace StealthHuntAI.Combat
 
         private void TickCombatLoop()
         {
-            if (_threat == null) return;
             if (_threat.HasLOS)
             {
                 _combatShootTimer += Time.deltaTime;
@@ -194,54 +186,14 @@ namespace StealthHuntAI.Combat
 
         private void SelectRole()
         {
-            if (_brain.CQB.IsActive) { SetRole(CombatRole.CQB); return; }
-
-            var ws = WorldState.Build(_ai, _threat, _brain);
-
-            if (!ws.HasIntel) { SetRole(CombatRole.Idle); return; }
-            if (ws.SquadStrength < 0.25f || ws.Health < 0.2f)
-            { SetRole(CombatRole.Cover); return; }
-
-            int idx = GetSquadIndex();
-            var strategy = _brain.Strategy.Current;
-
-            // Count existing roles so we dont stack same role
-            int advancing = CountSquadRole(CombatRole.Advance);
-            int suppressing = CountSquadRole(CombatRole.Suppress);
-            int flanking = CountSquadRole(CombatRole.Flank);
-            int squadSize = GetSquadCount();
-
-            CombatRole role = strategy switch
-            {
-                // Bounding: max 1 guard advances at a time -- others suppress
-                SquadStrategy.Bounding => advancing == 0 ? CombatRole.Advance : CombatRole.Suppress,
-                SquadStrategy.Pincer => flanking < 2
-                                            ? CombatRole.Flank
-                                            : suppressing == 0 ? CombatRole.Suppress
-                                            : CombatRole.Reposition,
-                SquadStrategy.Suppress => suppressing < Mathf.CeilToInt(squadSize * 0.5f)
-                                            ? CombatRole.Suppress : CombatRole.Reposition,
-                SquadStrategy.Overwatch => idx % 2 == 0 ? CombatRole.Advance : CombatRole.Cover,
-                SquadStrategy.Withdraw => CombatRole.Cover,
-                // Default: cautious approach on first contact, then advance/suppress
-                _ => _threat.LastSeenTime < 0f
-                        ? CombatRole.Cautious   // never seen -- find target first
-                   : advancing == 0 && _threat.TimeSinceSeen < 10f
-                        ? CombatRole.Advance
-                   : suppressing == 0 ? CombatRole.Suppress
-                   : CombatRole.Reposition,
-            };
-
-            // Use cautious only when actively being shot at from unknown direction
-            if (_threat.HasShotFrom && !_threat.HasLOS)
-                if (role == CombatRole.Advance) role = CombatRole.Cautious;
-
-            SetRole(role);
+            if (_brain == null) return;
+            // All role decisions made centrally by SquadTactician
+            var assigned = _brain.Tactician.GetAssignedRole(_ai);
+            SetRole(assigned);
         }
 
         public void ForceRole(CombatRole role)
         {
-            if (_role == role) return; // already in this role -- dont reset
             ReleaseCoverSpot();
             _role = role;
             _roleTimer = 0f;
@@ -260,6 +212,8 @@ namespace StealthHuntAI.Combat
                 CombatRole.Cautious => 10f,
                 CombatRole.Reposition => 8f,
                 CombatRole.CQB => 30f,
+                CombatRole.Search => 20f,
+                CombatRole.Withdraw => 15f,
                 _ => 8f,
             };
             CurrentGoal = role switch
@@ -270,6 +224,12 @@ namespace StealthHuntAI.Combat
                 CombatRole.Reposition => Goal.AdvanceTo,
                 CombatRole.Cover => Goal.HoldAndFire,
                 CombatRole.Cautious => Goal.AdvanceTo,
+                CombatRole.Search => Goal.Search,
+                CombatRole.Overwatch => Goal.HoldAndFire,
+                CombatRole.RearSecurity => Goal.HoldAndFire,
+                CombatRole.Breach => Goal.AdvanceTo,
+                CombatRole.Follow => Goal.AdvanceTo,
+                CombatRole.Withdraw => Goal.Withdraw,
                 _ => Goal.Idle,
             };
         }
@@ -598,175 +558,6 @@ namespace StealthHuntAI.Combat
                 ForceRole(CombatRole.Cover);
         }
 
-
-        // --- Search ----------------------------------------------------------
-        // Guard searches a sector based on squad index.
-        // Moves to a search position then scans before moving to next.
-
-        private float _searchScanTimer;
-
-        private void TickSearch()
-        {
-            if (!_roleDestSet)
-            {
-                // Get assigned sector from SquadTactician
-                float myAngle = _brain.Tactician.GetSearchSectorAngle(_ai);
-                float rad = myAngle * Mathf.Deg2Rad;
-                Vector3 dir = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
-
-                // Search from own position -- not shared origin
-                float dist = Random.Range(8f, 16f);
-                Vector3 tryPos = _ai.transform.position + dir * dist;
-
-                if (NavMesh.SamplePosition(tryPos, out var hit, 5f, NavMesh.AllAreas))
-                    _roleDestination = hit.position;
-                else
-                    _roleDestination = _ai.transform.position + dir * 5f;
-
-                _waypoints = TacticalPathfinder.BuildAdvanceRoute(_ai, _roleDestination);
-                _waypointIdx = 0;
-                _roleDestSet = true;
-                _searchScanTimer = 0f;
-            }
-
-            float distToDest = Vector3.Distance(_ai.transform.position, _roleDestination);
-
-            if (distToDest > 2f)
-            {
-                if (_waypoints != null && _waypointIdx < _waypoints.Count)
-                    _ai.CombatMoveTo(_waypoints[_waypointIdx], SpeedMultiplier * 0.8f);
-                else
-                    _ai.CombatMoveTo(_roleDestination, SpeedMultiplier * 0.8f);
-                TacticalPathfinder.FollowWaypoints(_ai, _waypoints, ref _waypointIdx);
-            }
-            else
-            {
-                // At search position -- scan briefly then pick new sector
-                _ai.CombatStop();
-                _searchScanTimer += Time.deltaTime;
-                _ai.CombatFaceToward(GetRoutingDest(), 60f);
-
-                if (_searchScanTimer > 2f)
-                    _roleDestSet = false; // pick next search position
-            }
-        }
-
-        // --- Overwatch -------------------------------------------------------
-        // Find a position behind the breach team and cover their backs.
-
-        private void TickOverwatch()
-        {
-            if (!_roleDestSet)
-            {
-                var ep = _brain.CQB.ActiveEntry;
-                if (ep != null)
-                {
-                    // Position behind entry point -- outside the breach zone
-                    Vector3 back = -ep.transform.forward;
-                    Vector3 tryPos = ep.transform.position + back * 4f;
-                    if (NavMesh.SamplePosition(tryPos, out var hit, 4f, NavMesh.AllAreas))
-                        _roleDestination = hit.position;
-                    else
-                        _roleDestination = _ai.transform.position;
-                }
-                else
-                {
-                    // No active CQB -- hold current position and watch
-                    _roleDestination = _ai.transform.position;
-                }
-                _roleDestSet = true;
-            }
-
-            float dist = Vector3.Distance(_ai.transform.position, _roleDestination);
-            if (dist > 1.5f)
-                _ai.CombatMoveTo(_roleDestination, SpeedMultiplier);
-            else
-            {
-                _ai.CombatStop();
-                // Face toward threat / entry point to cover breach team
-                var ep = _brain.CQB.ActiveEntry;
-                Vector3 watchDir = ep != null
-                    ? ep.transform.position
-                    : GetRoutingDest();
-                _ai.CombatFaceToward(watchDir, 80f);
-                if (_threat.HasLOS) ShootAt(_threat.EstimatedPosition);
-            }
-        }
-
-        // --- Rear Security ---------------------------------------------------
-        // Navigate around the outside of the building to the alternate entry point.
-
-        private void TickRearSecurity()
-        {
-            if (!_roleDestSet)
-            {
-                Vector3 threatPos = GetRoutingDest();
-                // Find alternate entry point -- not the one being breached
-                var allEps = EntryPointRegistry.FindAllNear(threatPos, 20f);
-                var primary = _brain.CQB.ActiveEntry;
-                EntryPoint target = null;
-                for (int i = 0; i < allEps.Count; i++)
-                    if (allEps[i] != primary) { target = allEps[i]; break; }
-
-                if (target != null)
-                {
-                    _roleDestination = target.StackLeftPos;
-                    _waypoints = TacticalPathfinder.BuildAdvanceRoute(
-                        _ai, _roleDestination);
-                }
-                else
-                {
-                    // No alternate entry -- reposition for angle instead
-                    ForceRole(CombatRole.Reposition);
-                    return;
-                }
-                _waypointIdx = 0;
-                _roleDestSet = true;
-            }
-
-            float dist = Vector3.Distance(_ai.transform.position, _roleDestination);
-            if (dist > 1.5f)
-            {
-                if (_waypoints != null && _waypointIdx < _waypoints.Count)
-                    _ai.CombatMoveTo(_waypoints[_waypointIdx], SpeedMultiplier);
-                else
-                    _ai.CombatMoveTo(_roleDestination, SpeedMultiplier);
-                TacticalPathfinder.FollowWaypoints(_ai, _waypoints, ref _waypointIdx);
-            }
-            else
-            {
-                // At rear entry -- hold and watch
-                _ai.CombatStop();
-                _ai.CombatFaceToward(GetRoutingDest(), 80f);
-                if (_threat.HasLOS) ShootAt(_threat.EstimatedPosition);
-            }
-        }
-
-        // --- Withdraw --------------------------------------------------------
-
-        private void TickWithdraw()
-        {
-            if (!_roleDestSet)
-            {
-                var route = TacticalPathfinder.BuildWithdrawRoute(_ai, GetRoutingDest());
-                if (route != null && route.Count > 0)
-                {
-                    _waypoints = route;
-                    _roleDestination = route[route.Count - 1];
-                }
-                else
-                    _roleDestination = _ai.transform.position - _ai.transform.forward * 8f;
-                _waypointIdx = 0;
-                _roleDestSet = true;
-            }
-
-            if (_waypoints != null && _waypointIdx < _waypoints.Count)
-                _ai.CombatMoveTo(_waypoints[_waypointIdx], SpeedMultiplier * 1.3f);
-            else
-                _ai.CombatMoveTo(_roleDestination, SpeedMultiplier * 1.3f);
-            TacticalPathfinder.FollowWaypoints(_ai, _waypoints, ref _waypointIdx);
-        }
-
         // --- CQB -------------------------------------------------------------
 
         private void TickCQB()
@@ -801,7 +592,7 @@ namespace StealthHuntAI.Combat
             else { _cqbAction = null; ForceRole(CombatRole.Advance); }
         }
 
-        // ---------- CQB evaluation (now handled by SquadTactician) -----------
+        // ---------- CQB evaluation -------------------------------------------
 
         private void TickCQBEvaluation()
         {
@@ -862,12 +653,20 @@ namespace StealthHuntAI.Combat
         {
             var target = _ai.GetTarget();
             if (target == null) return;
-
-            // All guards write to shared squad threat model
             if (_ai.Sensor.CanSeeTarget)
-                _brain.Intel.Threat.UpdateWithSight(target.Position, target.Velocity);
+            {
+                _threat.UpdateWithSight(target.Position, target.Velocity);
+                _brain.ReportThreat(_ai, target.Position, target.Velocity, 1f);
+            }
             else
-                _brain.Intel.UpdateNoSight();
+            {
+                _threat.UpdateWithoutSight();
+                if (_brain.SharedThreat.Confidence > _threat.Confidence + 0.2f)
+                    _threat.ReceiveIntel(_brain.SharedThreat.EstimatedPosition,
+                        _brain.SharedThreat.LastKnownVelocity,
+                        _brain.SharedThreat.Confidence * 0.85f);
+                _brain.UpdateNoSight();
+            }
         }
 
         // ---------- Event processing -----------------------------------------

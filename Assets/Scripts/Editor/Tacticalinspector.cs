@@ -212,8 +212,28 @@ namespace StealthHuntAI.Editor
                     EditorGUILayout.LabelField("Plan", sc.CurrentPlanName);
                     EditorGUILayout.LabelField("Strategy", sc.CurrentStrategy);
 
-                    // CQB state
+                    // SquadTactician scenario
                     var brain = Combat.TacticalBrain.GetOrCreate(_selected.squadID);
+                    var tac = brain.Tactician;
+                    EditorGUILayout.Space(4);
+                    GUI.color = tac.CurrentScenario switch
+                    {
+                        Combat.SquadTactician.TacticianScenario.Search => new Color(0.9f, 0.9f, 0.3f),
+                        Combat.SquadTactician.TacticianScenario.Approach => new Color(0.4f, 0.9f, 0.4f),
+                        Combat.SquadTactician.TacticianScenario.Assault => new Color(1.0f, 0.4f, 0.4f),
+                        Combat.SquadTactician.TacticianScenario.CQB => new Color(0.4f, 0.8f, 1.0f),
+                        Combat.SquadTactician.TacticianScenario.Withdraw => new Color(0.7f, 0.4f, 1.0f),
+                        _ => Color.white,
+                    };
+                    EditorGUILayout.LabelField("Scenario", tac.CurrentScenario.ToString(),
+                        EditorStyles.boldLabel);
+                    GUI.color = Color.white;
+
+                    // Assigned role from Tactician
+                    var assigned = tac.GetAssignedRole(_selected);
+                    EditorGUILayout.LabelField("Assigned Role", assigned.ToString());
+
+                    // CQB state
                     if (brain.CQB.IsActive)
                     {
                         EditorGUILayout.Space(4);
@@ -623,12 +643,10 @@ namespace StealthHuntAI.Editor
 
         private Combat.ThreatModel GetThreat(Combat.StandardCombat sc)
         {
-            // Access via reflection -- ThreatModel is private
-            var field = typeof(Combat.StandardCombat)
-                .GetField("_threat",
-                    System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance);
-            return field?.GetValue(sc) as Combat.ThreatModel;
+            // _threat is now a property pointing to shared squad intel
+            if (sc == null || _selected == null) return null;
+            var brain = Combat.TacticalBrain.GetOrCreate(_selected.squadID);
+            return brain?.Intel?.Threat;
         }
     }
 
