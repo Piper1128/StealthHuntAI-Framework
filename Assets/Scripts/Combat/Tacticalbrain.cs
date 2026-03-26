@@ -41,11 +41,14 @@ namespace StealthHuntAI.Combat
             for (int i = 0; i < allUnits.Count; i++)
             {
                 var u = allUnits[i];
+                // Only Hostile guards -- Passive/Suspicious guards skew the anchor
                 if (u == null || u.IsDead || u.squadID != squadID) continue;
+                if (u.CurrentAlertState != AlertState.Hostile) continue;
                 sum += u.transform.position;
                 n++;
             }
             if (n > 0) SquadAnchor = sum / n;
+            // If no Hostile guards yet keep last known anchor
         }
         // ---------- Backward-compat passthroughs ----------------------------
 

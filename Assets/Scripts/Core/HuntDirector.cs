@@ -46,8 +46,9 @@ namespace StealthHuntAI
             _coverPoints.Clear();
             _sectorWatchers.Clear();
             _flightHistory.Clear();
-            _knownHideSpots.Clear();
+            HideSpotMemory.Clear();
             FlightMemory.Reset();
+            _lastSector = -1;
             System.Array.Clear(_markov, 0, _markov.Length);
             _heatMap.Clear();
             _coverPoints.Clear();
@@ -237,6 +238,7 @@ namespace StealthHuntAI
         // Directional space divided into 8 sectors (N, NE, E, SE, S, SW, W, NW)
         // Transition matrix: _markov[from, to] = observation count
         private static readonly float[,] _markov = new float[8, 8];
+        private static int _lastSector = -1;
 
         // Prior strength -- flat prior so early predictions aren't wild
         private const float MarkovPrior = 0.5f;
@@ -255,22 +257,10 @@ namespace StealthHuntAI
         /// <summary>Total flight observations recorded this session.</summary>
         public static int FlightObservations => FlightMemory.Observations;
 
-        // ---------- Hide spot memory -----------------------------------------
+        // ---------- Hide spot memory -- delegated to HideSpotMemory ----------
 
-        public struct HideSpotRecord
-        {
-            public Vector3 Position;
-            public int FoundCount;
-            public float LastFoundTime;
-        }
-
-        private static readonly List<HideSpotRecord> _knownHideSpots
-            = new List<HideSpotRecord>();
-        private const int MaxHideSpots = 10;
-        private const float HideSpotMergeRadius = 3f;
-
-        public static System.Collections.Generic.IReadOnlyList<HideSpotRecord> KnownHideSpots
-            => _knownHideSpots;
+        public static IReadOnlyList<HideSpotMemory.HideSpotRecord> KnownHideSpots
+            => HideSpotMemory.KnownSpots;
 
         // Reused NavMeshPath for sound propagation -- initialized lazily
         private static NavMeshPath _soundPath;
@@ -355,6 +345,18 @@ namespace StealthHuntAI
         private bool _autoRegionsGenerated;
 
         // ---------- Unity lifecycle -------------------------------------------
+
+
+        [UnityEngine.RuntimeInitializeOnLoadMethod(
+            RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void DomainReload()
+        {
+            _target = null;
+            _units = new List<StealthHuntAI>();
+            _squads = new List<SquadBlackboard>();
+            _alertingSquad = false;
+            _nudgeCooldowns?.Clear();
+        }
 
         private void Awake()
         {
@@ -862,13 +864,25 @@ namespace StealthHuntAI
         /// </summary>
         public static void RecordFlightVector(Vector3 flightVec)
         {
-            FlightMemory.RecordFlight(flightVec);
+            if (flightVec.magnitude < 0.1f) return;
+
+            int currentSector = DirectionToSector(flightVec);
+
+            // Update Markov transition matrix
+            if (_lastSector >= 0)
+                _markov[_lastSector, currentSector] += 1f;
+
+            _lastSector = currentSector;
+            // FlightObservations++ -- now in FlightMemory
+
+            // Also update weighted history for blending
+            _flightHistory.Enqueue(flightVec.normalized);
+            while (_flightHistory.Count > MaxFlightHistory)
+                _flightHistory.Dequeue();
+
         }
 
-        private static void UpdatePredictedFlight()
-        {
-            // Delegated to FlightMemory -- called automatically by RecordFlight
-        }
+
 
         // ---------- Markov helpers --------------------------------------------
 
@@ -888,54 +902,16 @@ namespace StealthHuntAI
             return new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle));
         }
 
-        /// <summary>
-        /// Record a position where the player was spotted.
-        /// Used to build hide spot memory for better searching.
-        /// </summary>
+        /// <summary>Record where player was spotted -- delegated to HideSpotMemory.</summary>
         public static void RecordPlayerPosition(Vector3 position)
-        {
-            // Check if close to existing record
-            for (int i = 0; i < _knownHideSpots.Count; i++)
-            {
-                if (Vector3.Distance(_knownHideSpots[i].Position, position)
-                    < HideSpotMergeRadius)
-                {
-                    var updated = _knownHideSpots[i];
-                    updated.FoundCount++;
-                    updated.LastFoundTime = Time.time;
-                    _knownHideSpots[i] = updated;
-                    return;
-                }
-            }
-
-            // New spot
-            _knownHideSpots.Add(new HideSpotRecord
-            {
-                Position = position,
-                FoundCount = 1,
-                LastFoundTime = Time.time
-            });
-
-            // Keep only most recent/frequent -- drop oldest if over limit
-            if (_knownHideSpots.Count > MaxHideSpots)
-            {
-                // Remove least recently found
-                int oldest = 0;
-                for (int i = 1; i < _knownHideSpots.Count; i++)
-                    if (_knownHideSpots[i].LastFoundTime < _knownHideSpots[oldest].LastFoundTime)
-                        oldest = i;
-                _knownHideSpots.RemoveAt(oldest);
-            }
-        }
+            => HideSpotMemory.Add(position);
 
         /// <summary>
         /// Returns a snapshot copy of known hide spots for use in search strategy.
         /// Caller owns the list -- safe to use in coroutines.
         /// </summary>
-        public static List<HideSpotRecord> GetHideSpotSnapshot()
-        {
-            return new List<HideSpotRecord>(_knownHideSpots);
-        }
+        public static List<HideSpotMemory.HideSpotRecord> GetHideSpotSnapshot()
+            => HideSpotMemory.GetSnapshot();
 
         public static StealthTarget GetTarget() => _target;
 
@@ -956,9 +932,8 @@ namespace StealthHuntAI
         /// Called by SoundStimulus.Emit().
         /// </summary>
         public static void BroadcastSound(Vector3 position, float intensity, float radius)
-        {
-            SoundSystem.Broadcast(position, intensity, radius);
-        }
+            => SoundSystem.Broadcast(position, intensity, radius);
+
 
         private static void PropagateRaycast(
             Vector3 soundPos, Vector3 unitPos,

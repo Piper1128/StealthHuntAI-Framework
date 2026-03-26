@@ -160,7 +160,7 @@ namespace StealthHuntAI
         /// Snapshot of known player hide spots from HuntDirector.HideSpotMemory.
         /// Null-safe -- always check for null before iterating.
         /// </summary>
-        public List<HuntDirector.HideSpotRecord> KnownHideSpots;
+        public List<HideSpotMemory.HideSpotRecord> KnownHideSpots;
 
         /// <summary>
         /// PatrolRegion the last known position falls within, if any.

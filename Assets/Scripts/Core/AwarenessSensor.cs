@@ -435,7 +435,7 @@ namespace StealthHuntAI
             else if (AwarenessLevel > 0f)
             {
                 // Decay much slower when Hostile -- guards keep searching longer
-                float effectiveDecay = _isHostile ? decaySpeed * 0.1f : decaySpeed;
+                float effectiveDecay = _isHostile ? 0f : decaySpeed; // No decay in combat
                 AwarenessLevel = Mathf.Clamp01(Mathf.MoveTowards(
                     AwarenessLevel, 0f, effectiveDecay * Time.deltaTime));
 

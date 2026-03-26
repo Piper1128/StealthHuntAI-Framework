@@ -6,6 +6,7 @@ namespace StealthHuntAI.Combat
     /// Drives all squad-level systems every frame independent of individual guards.
     /// Attach to HuntDirector GameObject -- one instance drives all squads.
     /// </summary>
+    [DefaultExecutionOrder(-5)] // Run before StealthHuntAI (0)
     public class TacticianRunner : MonoBehaviour
     {
         [Header("Squad Coherency")]

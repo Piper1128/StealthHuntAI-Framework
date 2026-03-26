@@ -43,7 +43,7 @@ namespace StealthHuntAI.Combat
         {
             if (_assigned.TryGetValue(unit.GetInstanceID(), out var role))
                 return role;
-            return SquadBlackboard.TacticalRole.Search;
+            return SquadBlackboard.TacticalRole.Search; // default until first evaluation
         }
 
         // ---------- Re-evaluate triggers -------------------------------------
@@ -51,7 +51,7 @@ namespace StealthHuntAI.Combat
         private float _evalTimer;
         private float _lastConfidence;
         private int _lastAliveCount = -1; // -1 forces evaluate on first tick
-        private const float EvalInterval = 3f;
+        private const float EvalInterval = 0.5f; // Fast re-eval for responsive combat
 
         private int _squadID = -1;
 
@@ -91,104 +91,75 @@ namespace StealthHuntAI.Combat
             var intel = brain.Intel;
             float conf = intel.Confidence;
             float squadStr = (float)members.Count
-                           / Mathf.Max(1, CountTotal(allUnits, squadID));
+                             / Mathf.Max(1, CountTotal(allUnits, squadID));
 
-            var board = SquadBlackboard.Get(squadID);
-            board?.ClearDestinations(); // fresh destinations each evaluation
-
-            List<SquadBlackboard.RoleSlot> slots;
-
+            // --- Withdraw: squad collapsing ----------------------------------
             if (squadStr < 0.3f)
             {
-                slots = BuildSlots_Withdraw(members);
+                AssignAll(members, SquadBlackboard.TacticalRole.Withdraw);
                 CurrentScenario = TacticianScenario.Withdraw;
+                return;
             }
-            else if (!intel.HasIntel || conf < 0.15f)
+
+            // --- Check blackboard for intel when ThreatModel is empty ----------
+            // Guards alerted by sound/squad-alert may have board intel but no threat model
+            var board = SquadBlackboard.Get(squadID);
+            if ((!intel.HasIntel || conf < 0.15f)
+             && board != null && board.SharedConfidence > 0.15f)
             {
-                slots = BuildSlots_Search(members, intel);
+                // Seed threat from blackboard so we use Approach not Search
+                intel.Threat.ReceiveIntel(board.SharedLastKnown,
+                    Vector3.zero, board.SharedConfidence);
+            }
+
+            // --- Search: no meaningful intel ---------------------------------
+            if (!intel.HasIntel || conf < 0.15f)
+            {
+                AssignSearch(members, intel);
                 CurrentScenario = TacticianScenario.Search;
+                return;
             }
-            else if (intel.Threat.LastSeenTime < 0f)
+            // Player spotted before but intel is old -- cautious approach
+            if (intel.Threat.LastSeenTime < 0f)
             {
-                slots = BuildSlots_Cautious(members);
+                AssignCautious(members);
                 CurrentScenario = TacticianScenario.Search;
+                return;
             }
-            else
+
+            // --- CQB: entry point is the route to player ---------------------
+            Vector3 threatPos = intel.EstimatedPos;
+            if (IsCQBScenario(members, threatPos, brain))
             {
-                Vector3 threatPos = intel.EstimatedPos;
-                if (IsCQBScenario(members, threatPos, brain))
-                {
-                    slots = BuildSlots_CQB(members, threatPos, brain);
-                    CurrentScenario = TacticianScenario.CQB;
-                }
-                else if (conf >= 0.5f)
-                {
-                    slots = BuildSlots_Assault(members, intel);
-                    CurrentScenario = TacticianScenario.Assault;
-                }
-                else
-                {
-                    slots = BuildSlots_Approach(members, intel);
-                    CurrentScenario = TacticianScenario.Approach;
-                }
+                AssignCQB(members, threatPos, brain);
+                CurrentScenario = TacticianScenario.CQB;
+                return;
             }
 
-            // Write slots to blackboard -- guards self-claim on next Tick
-            board?.WriteRoleSlots(slots);
-
-            // Also maintain _assigned for GetAssignedRole fallback
-            // Guards that havent claimed yet get their best slot pre-assigned
-            _assigned.Clear();
-            if (board != null)
+            // --- Assault: high confidence ------------------------------------
+            if (conf >= 0.3f)
             {
-                // Pre-assign: sort members by distance to each slot's ideal pos
-                var available = new List<SquadBlackboard.RoleSlot>(slots);
-                var sorted = new List<StealthHuntAI>(members);
-
-                foreach (var slot in available)
-                {
-                    if (sorted.Count == 0) break;
-                    sorted.Sort((a, b) =>
-                        Vector3.Distance(a.transform.position, slot.IdealPosition)
-                        .CompareTo(
-                        Vector3.Distance(b.transform.position, slot.IdealPosition)));
-                    Assign(sorted[0], slot.Role);
-                    sorted.RemoveAt(0);
-                }
+                AssignAssault(members, intel);
+                CurrentScenario = TacticianScenario.Assault;
+                return;
             }
+
+            // --- Approach: medium confidence ---------------------------------
+            AssignApproach(members, intel);
+            CurrentScenario = TacticianScenario.Approach;
         }
 
-        // ---------- Slot builders -------------------------------------------
-        // Each builder returns a list of RoleSlots with ideal positions.
-        // Guards claim slots based on proximity -- emergent coordination.
+        // ---------- Scenario assignments -------------------------------------
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_Withdraw(
-            List<StealthHuntAI> members)
+        private void AssignCautious(List<StealthHuntAI> members)
         {
-            var slots = new List<SquadBlackboard.RoleSlot>();
-            foreach (var m in members)
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Withdraw,
-                    IdealPosition = m.transform.position, // withdraw from current pos
-                });
-            return slots;
+            // All guards move toward estimated position cautiously
+            // Used when we have no direct sight but squad was just alerted
+            for (int i = 0; i < members.Count; i++)
+                Assign(members[i], SquadBlackboard.TacticalRole.Cautious);
         }
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_Cautious(
-            List<StealthHuntAI> members)
-        {
-            var slots = new List<SquadBlackboard.RoleSlot>();
-            foreach (var m in members)
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Cautious,
-                    IdealPosition = m.transform.position,
-                });
-            return slots;
-        }
-
-        // Maps guard instanceID to assigned search sector angle (kept for TickSearch)
+        // Maps guard instanceID to assigned search sector angle
         private readonly Dictionary<int, float> _searchSectors
             = new Dictionary<int, float>();
 
@@ -202,184 +173,115 @@ namespace StealthHuntAI.Combat
             return 0f;
         }
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_Search(
-            List<StealthHuntAI> members, SquadIntel intel)
+        private void AssignSearch(List<StealthHuntAI> members, SquadIntel intel)
         {
             _searchSectors.Clear();
-            var slots = new List<SquadBlackboard.RoleSlot>();
             int count = Mathf.Max(1, members.Count);
-            float sector = 360f / count;
-            float start = UnityEngine.Random.Range(0f, 360f);
-            Vector3 origin = intel.HasIntel
-                ? intel.EstimatedPos
-                : members[0].transform.position;
+            float sectorSize = 360f / count;
+            float startAngle = UnityEngine.Random.Range(0f, 360f);
 
             for (int i = 0; i < members.Count; i++)
             {
                 if (members[i] == null || members[i].IsDead) continue;
-                float angle = start + sector * i;
+                float angle = startAngle + sectorSize * i;
                 _searchSectors[members[i].GetInstanceID()] = angle;
-
-                float rad = angle * Mathf.Deg2Rad;
-                Vector3 dir = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
-                Vector3 idealPos = origin + dir * 12f;
-
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Search,
-                    IdealPosition = idealPos,
-                });
+                Assign(members[i], SquadBlackboard.TacticalRole.Search);
             }
-            return slots;
         }
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_Approach(
-            List<StealthHuntAI> members, SquadIntel intel)
+        private void AssignApproach(List<StealthHuntAI> members, SquadIntel intel)
         {
-            var slots = new List<SquadBlackboard.RoleSlot>();
-            Vector3 threatPos = intel.EstimatedPos;
-
+            // Check if direct path to threat is exposed
             bool directExposed = IsDirectPathExposed(
-                members[0].transform.position, threatPos);
+                members[0].transform.position, intel.EstimatedPos);
 
-            // Advance slot -- directly toward threat
-            slots.Add(new SquadBlackboard.RoleSlot
+            for (int i = 0; i < members.Count; i++)
             {
-                Role = SquadBlackboard.TacticalRole.Advance,
-                IdealPosition = threatPos,
-            });
-
-            // Flank slot -- only if path exposed; ideal pos is 90deg offset
-            if (directExposed && members.Count >= 2)
-            {
-                Vector3 toT = (threatPos - members[0].transform.position).normalized;
-                Vector3 perp = Vector3.Cross(toT, Vector3.up).normalized;
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Flank,
-                    IdealPosition = threatPos + perp * 12f,
-                });
+                SquadBlackboard.TacticalRole role;
+                if (i == 0)
+                    role = SquadBlackboard.TacticalRole.Advance;
+                else if (i == 1)
+                    role = SquadBlackboard.TacticalRole.Flank; // always flank -- pressure from two sides
+                else if (i == 2)
+                    role = SquadBlackboard.TacticalRole.Suppress; // suppress while others move
+                else
+                    role = SquadBlackboard.TacticalRole.Advance;  // extra guards push forward
+                Assign(members[i], role);
             }
-
-            // Rest -- reposition (find angles)
-            int remaining = members.Count - slots.Count;
-            for (int i = 0; i < remaining; i++)
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Reposition,
-                    IdealPosition = threatPos,
-                });
-
-            return slots;
         }
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_Assault(
-            List<StealthHuntAI> members, SquadIntel intel)
+        private void AssignAssault(List<StealthHuntAI> members, SquadIntel intel)
         {
-            var slots = new List<SquadBlackboard.RoleSlot>();
-            Vector3 threatPos = intel.EstimatedPos;
-
             bool anyLOS = false;
             for (int i = 0; i < members.Count; i++)
                 if (members[i].Sensor != null && members[i].Sensor.CanSeeTarget)
                 { anyLOS = true; break; }
 
             bool directExposed = IsDirectPathExposed(
-                members[0].transform.position, threatPos);
+                members[0].transform.position, intel.EstimatedPos);
 
-            // Advance
-            slots.Add(new SquadBlackboard.RoleSlot
+            // Coordinated assault: Advance + Flank press from two sides,
+            // one Suppress pins player, rest Advance
+            for (int i = 0; i < members.Count; i++)
             {
-                Role = SquadBlackboard.TacticalRole.Advance,
-                IdealPosition = threatPos,
-            });
-
-            // Flank -- 90deg offset
-            if (directExposed && members.Count >= 2)
-            {
-                Vector3 toT = (threatPos - members[0].transform.position).normalized;
-                Vector3 perp = Vector3.Cross(toT, Vector3.up).normalized;
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Flank,
-                    IdealPosition = threatPos + perp * 15f,
-                });
+                SquadBlackboard.TacticalRole role;
+                if (i == 0) role = SquadBlackboard.TacticalRole.Advance;
+                else if (i == 1) role = SquadBlackboard.TacticalRole.Flank;
+                else if (i == 2 && anyLOS) role = SquadBlackboard.TacticalRole.Suppress;
+                else role = SquadBlackboard.TacticalRole.Advance;
+                Assign(members[i], role);
             }
-
-            // Suppress -- only if someone has LOS, ideal pos = current pos with LOS
-            if (anyLOS && members.Count >= 3)
-            {
-                StealthHuntAI losUnit = null;
-                for (int i = 0; i < members.Count; i++)
-                    if (members[i].Sensor != null && members[i].Sensor.CanSeeTarget)
-                    { losUnit = members[i]; break; }
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Suppress,
-                    IdealPosition = losUnit?.transform.position ?? threatPos,
-                });
-            }
-
-            // Rest -- reposition
-            int remaining = members.Count - slots.Count;
-            for (int i = 0; i < remaining; i++)
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Reposition,
-                    IdealPosition = threatPos,
-                });
-
-            return slots;
         }
 
-        private List<SquadBlackboard.RoleSlot> BuildSlots_CQB(
-            List<StealthHuntAI> members, Vector3 threatPos, TacticalBrain brain)
+        private void AssignCQB(List<StealthHuntAI> members, Vector3 threatPos,
+                                TacticalBrain brain)
         {
-            var slots = new List<SquadBlackboard.RoleSlot>();
             var ep = EntryPointRegistry.FindBest(members[0].transform.position, threatPos);
-            if (ep == null) return BuildSlots_Assault(members, brain.Intel);
+            if (ep == null) { AssignAssault(members, brain.Intel); return; }
 
+            // Find alternate entry point for rear security
             var allEps = EntryPointRegistry.FindAllNear(threatPos, 20f);
             EntryPoint rearEp = null;
             for (int i = 0; i < allEps.Count; i++)
                 if (allEps[i] != ep) { rearEp = allEps[i]; break; }
 
-            // Breach -- closest to entry
-            slots.Add(new SquadBlackboard.RoleSlot
-            { Role = SquadBlackboard.TacticalRole.Breach, IdealPosition = ep.StackLeftPos });
+            // Assign by priority -- fill critical roles first
+            // Priority: Breach > Follow > RearSecurity > Overwatch
+            var remaining = new List<StealthHuntAI>(members);
 
-            // Follow
-            if (members.Count >= 2)
-                slots.Add(new SquadBlackboard.RoleSlot
-                { Role = SquadBlackboard.TacticalRole.Follow, IdealPosition = ep.StackRightPos });
+            // Breacher -- closest to entry point
+            remaining.Sort((a, b) =>
+                Vector3.Distance(a.transform.position, ep.transform.position)
+                .CompareTo(
+                Vector3.Distance(b.transform.position, ep.transform.position)));
 
-            // Rear security
-            if (rearEp != null && members.Count >= 3)
-                slots.Add(new SquadBlackboard.RoleSlot
-                { Role = SquadBlackboard.TacticalRole.RearSecurity, IdealPosition = rearEp.StackLeftPos });
+            if (remaining.Count > 0)
+            { Assign(remaining[0], SquadBlackboard.TacticalRole.Breach); remaining.RemoveAt(0); }
 
-            // Rest -- overwatch
-            int remaining = members.Count - slots.Count;
-            for (int i = 0; i < remaining; i++)
-                slots.Add(new SquadBlackboard.RoleSlot
-                {
-                    Role = SquadBlackboard.TacticalRole.Overwatch,
-                    IdealPosition = ep.transform.position + (-ep.transform.forward) * 4f,
-                });
+            // Follower -- second closest
+            if (remaining.Count > 0)
+            { Assign(remaining[0], SquadBlackboard.TacticalRole.Follow); remaining.RemoveAt(0); }
 
-            // Start CQB
+            // Rear security -- only if alternate entry point exists
+            if (remaining.Count > 0 && rearEp != null)
+            { Assign(remaining[0], SquadBlackboard.TacticalRole.RearSecurity); remaining.RemoveAt(0); }
+
+            // Rest -- overwatch behind breach team
+            for (int i = 0; i < remaining.Count; i++)
+                Assign(remaining[i], SquadBlackboard.TacticalRole.Overwatch);
+
+            // Start CQB in controller
             if (!brain.CQB.IsActive)
             {
-                var sorted = new List<StealthHuntAI>(members);
-                sorted.Sort((a, b) =>
+                var sortedForCQB = new List<StealthHuntAI>(members);
+                sortedForCQB.Sort((a, b) =>
                     Vector3.Distance(a.transform.position, ep.transform.position)
                     .CompareTo(
                     Vector3.Distance(b.transform.position, ep.transform.position)));
-                brain.CQB.EvaluateEntry(members[0].transform.position,
-                    threatPos, brain.Intel.Confidence, sorted);
-            }
 
-            return slots;
+                brain.CQB.EvaluateEntry(members[0].transform.position,
+                    threatPos, brain.Intel.Confidence, sortedForCQB);
+            }
         }
 
         // ---------- Helpers --------------------------------------------------
