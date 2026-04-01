@@ -1,4 +1,5 @@
 # StealthHuntAI
+Combat system still under development and dont work as intended yet
 
 A Unity 6 stealth and combat AI system built for the Asset Store. Guards perceive, hunt, coordinate and breach — without scripted behaviour trees.
 
